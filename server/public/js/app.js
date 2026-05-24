@@ -40,7 +40,7 @@ const RECORD_DURATION_MS = 3000; // 3-second recording at native I2S rate
 // ─── DOM refs (resolved once on DOMContentLoaded) ─────────────────────────────
 
 let elStatus, elCurrentDb, elMeter, elChartOverlay, elUptime;
-let elRecordBtn, elStopBtn, elReplayBtn, elRecDuration, elRateSelect;
+let elRecordBtn, elStopBtn, elReplayBtn, elDownloadBtn, elRecDuration, elRateSelect;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
   elRecordBtn    = document.getElementById('record-btn');
   elStopBtn      = document.getElementById('stop-btn');
   elReplayBtn    = document.getElementById('replay-btn');
+  elDownloadBtn  = document.getElementById('download-btn');
   elRecDuration  = document.getElementById('rec-duration');
   elRateSelect   = document.getElementById('sample-rate-select');
 
@@ -421,6 +422,7 @@ function startRecording() {
   elRecordBtn.disabled = true;
   elStopBtn.disabled   = false;
   elReplayBtn.disabled = true;
+  elDownloadBtn.style.display = 'none';
 
   stopPolling(); // pause live chart while ESP32 is recording
 
@@ -449,6 +451,10 @@ function startRecording() {
       const kb = (wavData.byteLength / 1024).toFixed(0);
       elRecDuration.textContent = `${kb} KB / ${recordBuffer.length} pts — click Replay`;
       elReplayBtn.disabled = false;
+      // Show download link so the WAV can be verified outside the browser
+      elDownloadBtn.href     = audioUrl;
+      elDownloadBtn.download = 'recording.wav';
+      elDownloadBtn.style.display = '';
     })
     .catch(err => {
       if (err.name !== 'AbortError') {
@@ -494,9 +500,17 @@ function startReplay() {
 
   // Play audio
   currentAudio = new Audio(audioUrl);
-  currentAudio.onended  = () => stopReplay();
-  currentAudio.onerror  = () => stopReplay();
-  currentAudio.play().catch(() => stopReplay());
+  currentAudio.onended = () => stopReplay();
+  currentAudio.onerror = () => {
+    const code = currentAudio?.error?.code ?? '?';
+    const msg  = currentAudio?.error?.message ?? '';
+    elRecDuration.textContent = `⚠ Audio error (MediaError ${code}${msg ? ': ' + msg : ''}) — try ↓WAV`;
+    stopReplay();
+  };
+  currentAudio.play().catch(err => {
+    elRecDuration.textContent = `⚠ Playback blocked: ${err.message} — try ↓WAV`;
+    stopReplay();
+  });
 
   // Visual chart replay from dBFS timeline computed from WAV
   let i = 0;
