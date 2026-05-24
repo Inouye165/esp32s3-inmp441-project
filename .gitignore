@@ -1,0 +1,22 @@
+# ── PlatformIO ──────────────────────────────────────────────────────────────
+firmware/.pio/
+firmware/.pioenvs/
+
+# ── Node / Server ────────────────────────────────────────────────────────────
+server/node_modules/
+server/dist/
+server/.env            # real env — use .env.example as template
+
+# ── TypeScript build artefacts ───────────────────────────────────────────────
+*.js.map
+*.d.ts.map
+
+# ── OS / editor ─────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+*.swp
+*.swo
+
+# ── Jest / coverage ──────────────────────────────────────────────────────────
+coverage/
