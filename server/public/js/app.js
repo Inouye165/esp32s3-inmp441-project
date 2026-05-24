@@ -25,11 +25,17 @@ let boardFetchedAt = 0;
 let boardUptime   = 0;
 
 // Recording state
-let recordBuffer  = [];   // [{ts, db}] while recording / after stop
+let recordBuffer  = [];   // [{ts, db}] computed from WAV for visual chart replay
 let isRecording   = false;
 let recordStart   = 0;
 let replayTimer   = null;
 let recTimerTick  = null;
+// Audio state (actual WAV from ESP32)
+let audioBlob     = null;  // Blob containing recorded WAV
+let audioUrl      = null;  // object URL for the WAV blob
+let currentAudio  = null;  // currently playing Audio element
+let recordAbort   = null;  // AbortController for in-progress recording fetch
+const RECORD_DURATION_MS = 5000; // 5-second recordings
 
 // ─── DOM refs (resolved once on DOMContentLoaded) ─────────────────────────────
 
@@ -224,26 +230,13 @@ function stopPolling() {
 async function pollAudioLevel() {
   try {
     const res = await fetch('/api/proxy/audio/level');
-    if (!res.ok) {
-      // Record a null gap so timing is preserved during replay
-      if (isRecording && recordBuffer.length < MAX_RECORD_POINTS) {
-        recordBuffer.push({ ts: Date.now(), db: null });
-      }
-      return;
-    }
+    if (!res.ok) return;
     const data = await res.json();
     updateLevelDisplay(data.db_fs);
     updateChart(data.db_fs);
     updateUptime();
-    // Record data point if recording is active
-    if (isRecording && recordBuffer.length < MAX_RECORD_POINTS) {
-      recordBuffer.push({ ts: Date.now(), db: data.db_fs });
-    }
   } catch {
     // silent — keep trying; connection errors are surfaced on the info fetch
-    if (isRecording && recordBuffer.length < MAX_RECORD_POINTS) {
-      recordBuffer.push({ ts: Date.now(), db: null });
-    }
   }
 }
 
@@ -419,70 +412,138 @@ function rssiBar(rssi) {
 // ─── Recording ────────────────────────────────────────────────────────────────
 
 function startRecording() {
+  // Reset old recording
+  if (audioUrl) { URL.revokeObjectURL(audioUrl); audioUrl = null; }
+  audioBlob    = null;
   recordBuffer = [];
-  isRecording  = true;
   recordStart  = Date.now();
+
   elRecordBtn.disabled = true;
   elStopBtn.disabled   = false;
   elReplayBtn.disabled = true;
-  elRecDuration.textContent = '● 0s';
+
+  stopPolling(); // pause live chart while ESP32 is recording
+
+  // Countdown display
+  let remaining = Math.ceil(RECORD_DURATION_MS / 1000);
+  elRecDuration.textContent = `● ${remaining}s…`;
   recTimerTick = setInterval(() => {
-    const s = Math.round((Date.now() - recordStart) / 1000);
-    elRecDuration.textContent = `● ${s}s`;
-    if (recordBuffer.length >= MAX_RECORD_POINTS) stopRecording();
+    remaining--;
+    if (remaining > 0) elRecDuration.textContent = `● ${remaining}s…`;
   }, 1000);
+
+  // Fetch WAV from ESP32 via server proxy
+  recordAbort = new AbortController();
+  fetch(`/api/proxy/audio/record?duration_ms=${RECORD_DURATION_MS}`, {
+    signal: recordAbort.signal,
+  })
+    .then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.arrayBuffer();
+    })
+    .then(wavData => {
+      audioBlob = new Blob([wavData], { type: 'audio/wav' });
+      audioUrl  = URL.createObjectURL(audioBlob);
+      // Compute dBFS timeline from WAV for visual chart replay
+      recordBuffer = computeDbfsFromWav(wavData);
+      const kb = (wavData.byteLength / 1024).toFixed(0);
+      elRecDuration.textContent = `${kb} KB / ${recordBuffer.length} pts — click Replay`;
+      elReplayBtn.disabled = false;
+    })
+    .catch(err => {
+      if (err.name !== 'AbortError') {
+        elRecDuration.textContent = `⚠ Recording failed: ${err.message}`;
+      }
+    })
+    .finally(() => {
+      clearInterval(recTimerTick);
+      recordAbort  = null;
+      isRecording  = false;
+      elRecordBtn.disabled = false;
+      elStopBtn.disabled   = true;
+      startPolling(); // resume live chart
+    });
 }
 
 function stopRecording() {
-  isRecording = false;
+  if (recordAbort) {
+    recordAbort.abort();
+    recordAbort = null;
+    elRecDuration.textContent = 'Recording cancelled';
+  }
   clearInterval(recTimerTick);
+  isRecording  = false;
   elRecordBtn.disabled = false;
   elStopBtn.disabled   = true;
-  const validPts = recordBuffer.filter(p => p.db !== null).length;
-  elReplayBtn.disabled = validPts === 0;
-  const s = Math.round((Date.now() - recordStart) / 1000);
-  if (validPts === 0) {
-    elRecDuration.textContent = `⚠ 0 pts captured (ESP32 unreachable during recording)`;
-  } else {
-    elRecDuration.textContent = `${validPts} pts / ${s}s — ready to replay`;
-  }
+  elReplayBtn.disabled = !audioUrl;
 }
 
 function startReplay() {
-  const validPts = recordBuffer.filter(p => p.db !== null).length;
-  if (validPts === 0) return;
+  if (!audioUrl) return;
   stopPolling();
 
-  // Clear chart so replay data is visible from the start
+  // Clear chart so recorded waveform appears from the start
   if (chart) {
     chart.data.datasets[0].data = new Array(CHART_WINDOW_POINTS).fill(null);
     chart.update('none');
   }
 
-  let i = 0;
   elReplayBtn.disabled = true;
   elRecordBtn.disabled = true;
-  elRecDuration.textContent = `▶ 0 / ${recordBuffer.length}`;
+  elRecDuration.textContent = '▶ Playing…';
 
+  // Play audio
+  currentAudio = new Audio(audioUrl);
+  currentAudio.onended  = () => stopReplay();
+  currentAudio.onerror  = () => stopReplay();
+  currentAudio.play().catch(() => stopReplay());
+
+  // Visual chart replay from dBFS timeline computed from WAV
+  let i = 0;
   replayTimer = setInterval(() => {
-    if (i >= recordBuffer.length) {
-      stopReplay();
-      return;
-    }
-    const db = recordBuffer[i++].db;  // may be null (gap during recording)
-    if (db !== null) updateLevelDisplay(db);
-    updateChart(db);                  // null = gap in chart line
-    elRecDuration.textContent = `▶ ${i} / ${recordBuffer.length}`;
+    if (i >= recordBuffer.length) return; // let audio.onended handle stop
+    const entry = recordBuffer[i++];
+    if (entry.db !== null) updateLevelDisplay(entry.db);
+    updateChart(entry.db);
   }, POLL_INTERVAL_MS);
 }
 
 function stopReplay() {
+  if (currentAudio) {
+    currentAudio.onended = null;
+    currentAudio.pause();
+    currentAudio = null;
+  }
   clearInterval(replayTimer);
   replayTimer = null;
-  elReplayBtn.disabled = false;
+  elReplayBtn.disabled = !audioUrl;
   elRecordBtn.disabled = false;
-  elRecDuration.textContent = `${recordBuffer.length} pts`;
-  startPolling(); // resume live feed
+  const kb = audioBlob ? `${(audioBlob.size / 1024).toFixed(0)} KB — click Replay` : '';
+  elRecDuration.textContent = kb;
+  startPolling();
+}
+
+// ─── WAV → dBFS timeline (for visual chart during replay) ────────────────────
+
+function computeDbfsFromWav(arrayBuffer) {
+  const view        = new DataView(arrayBuffer);
+  const sampleRate  = view.getUint32(24, true);
+  const dataBytes   = view.getUint32(40, true);
+  const pcm         = new Int16Array(arrayBuffer, 44, dataBytes / 2);
+  const chunkSamp   = Math.round(sampleRate * POLL_INTERVAL_MS / 1000);
+  const result      = [];
+  for (let i = 0; i < pcm.length; i += chunkSamp) {
+    let sumSq = 0;
+    const end = Math.min(i + chunkSamp, pcm.length);
+    for (let j = i; j < end; j++) {
+      const s = pcm[j] / 32768.0;
+      sumSq += s * s;
+    }
+    const rms  = Math.sqrt(sumSq / (end - i));
+    const dbfs = rms > 1e-10 ? 20 * Math.log10(rms) : -90;
+    result.push({ ts: i * 1000 / sampleRate, db: Math.max(-90, Math.min(0, dbfs)) });
+  }
+  return result;
 }
 
 // ─── Sample rate ──────────────────────────────────────────────────────────────

@@ -27,6 +27,12 @@ bool micInit();
  */
 AudioLevel micReadLevel();
 
+/**
+ * Pause/resume the micTask's I2S reads while a WAV recording is in progress.
+ * Must be called before the recording handler reads I2S directly.
+ */
+void micSetRecordingPause(bool pause);
+
 /** Return a snapshot of the most recently computed AudioLevel. Thread-safe. */
 AudioLevel micGetLatestLevel();
 

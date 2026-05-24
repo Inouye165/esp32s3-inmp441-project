@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <esp_chip_info.h>
 #include <esp_flash.h>
+#include <driver/i2s.h>
 
 // ─── CORS helper ─────────────────────────────────────────────────────────────
 
@@ -141,14 +142,110 @@ static void handleOptions(WebServer& server) {
     server.send(204);
 }
 
+// ─── WAV recording handler ────────────────────────────────────────────────────
+//  GET /api/audio/record?duration_ms=3000
+//  Records duration_ms of audio at 16 kHz / 16-bit mono, returns WAV file.
+//  Max 5 seconds. Pauses the micTask while owning I2S.
+
+static void buildWavHeader(uint8_t* h, uint32_t sampleRate, uint32_t dataBytes) {
+    const uint16_t nCh   = 1;
+    const uint16_t bits  = 16;
+    const uint32_t br    = sampleRate * nCh * bits / 8;
+    const uint16_t ba    = (uint16_t)(nCh * bits / 8);
+    const uint32_t csz   = 36 + dataBytes;
+    const uint32_t sc1   = 16;
+    const uint16_t fmt   = 1;
+    memcpy(h + 0,  "RIFF", 4); memcpy(h + 4,  &csz,  4);
+    memcpy(h + 8,  "WAVE", 4); memcpy(h + 12, "fmt ", 4);
+    memcpy(h + 16, &sc1,   4); memcpy(h + 20, &fmt,   2);
+    memcpy(h + 22, &nCh,   2); memcpy(h + 24, &sampleRate, 4);
+    memcpy(h + 28, &br,    4); memcpy(h + 32, &ba,    2);
+    memcpy(h + 34, &bits,  2); memcpy(h + 36, "data", 4);
+    memcpy(h + 40, &dataBytes, 4);
+}
+
+static void handleAudioRecord(WebServer& server) {
+    addCorsHeaders(server);
+
+    uint32_t durationMs = 3000;
+    if (server.hasArg("duration_ms")) {
+        int v = server.arg("duration_ms").toInt();
+        durationMs = (uint32_t)max(500, min(5000, v));
+    }
+
+    const uint32_t RATE   = 16000;          // 16 kHz — good speech quality
+    const uint32_t nSamp  = (RATE * durationMs) / 1000;
+    const uint32_t nBytes = nSamp * sizeof(int16_t);
+
+    if (ESP.getFreeHeap() < nBytes + 32768) {
+        server.send(507, "application/json",
+                    "{\"error\":\"insufficient heap for recording\"}");
+        return;
+    }
+
+    int16_t* buf = (int16_t*)malloc(nBytes);
+    if (!buf) {
+        server.send(507, "application/json", "{\"error\":\"malloc failed\"}");
+        return;
+    }
+
+    // Take exclusive ownership of I2S
+    micSetRecordingPause(true);
+    const uint32_t prevRate = micGetSampleRate();
+    i2s_set_sample_rates(I2S_PORT, RATE);
+
+    // Flush stale DMA samples (one buffer's worth)
+    { int32_t tmp[I2S_DMA_BUF_LEN]; size_t b = 0;
+      i2s_read(I2S_PORT, tmp, sizeof(tmp), &b, pdMS_TO_TICKS(200)); }
+
+    // Record
+    uint32_t recorded = 0;
+    while (recorded < nSamp) {
+        int32_t raw[64];
+        size_t  got = 0;
+        uint32_t want = min((uint32_t)64, nSamp - recorded);
+        i2s_read(I2S_PORT, raw, want * sizeof(int32_t), &got, pdMS_TO_TICKS(1000));
+        uint32_t n = got / sizeof(int32_t);
+        for (uint32_t i = 0; i < n; i++) {
+            // INMP441: 24-bit left-justified in 32-bit frame → top 16 bits
+            buf[recorded++] = (int16_t)(raw[i] >> 16);
+        }
+    }
+
+    // Restore and release
+    i2s_set_sample_rates(I2S_PORT, prevRate);
+    micSetRecordingPause(false);
+
+    // Send WAV
+    uint8_t header[44];
+    buildWavHeader(header, RATE, nBytes);
+
+    server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
+    server.sendHeader("Cache-Control", "no-cache");
+    server.setContentLength(44 + nBytes);
+    server.send(200, "audio/wav", "");
+    server.sendContent((const char*)header, 44);
+
+    const uint32_t TX = 1024;
+    const uint8_t* p = (const uint8_t*)buf;
+    uint32_t left = nBytes;
+    while (left > 0) {
+        uint32_t chunk = min(TX, left);
+        server.sendContent((const char*)p, chunk);
+        p += chunk; left -= chunk;
+    }
+    free(buf);
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 void httpApiBegin(WebServer& server) {
     server.on("/", HTTP_GET, [&server]() { handleRoot(server); });
     server.on("/api/info", HTTP_GET, [&server]() { handleInfo(server); });
-    server.on("/api/audio/level", HTTP_GET, [&server]() { handleAudioLevel(server); });
+    server.on("/api/audio/level",  HTTP_GET,  [&server]() { handleAudioLevel(server); });
     server.on("/api/audio/config", HTTP_GET,  [&server]() { handleAudioConfig(server); });
     server.on("/api/audio/config", HTTP_POST, [&server]() { handleAudioConfig(server); });
+    server.on("/api/audio/record", HTTP_GET,  [&server]() { handleAudioRecord(server); });
 
     // Handle pre-flight CORS requests
     server.onNotFound([&server]() {

@@ -91,4 +91,44 @@ router.post('/proxy/audio/config', async (req: Request, res: Response) => {
   }
 });
 
+// ─── GET /api/proxy/audio/record — record WAV from ESP32 microphone ──────────
+// Params: duration_ms (500–5000, default 3000)
+// Returns: audio/wav binary — 16 kHz / 16-bit mono PCM
+
+router.get('/proxy/audio/record', async (req: Request, res: Response) => {
+  if (!requireEsp32Config(res)) return;
+  const base = runtimeConfig.esp32Port === 80
+    ? `http://${runtimeConfig.esp32Ip}`
+    : `http://${runtimeConfig.esp32Ip}:${runtimeConfig.esp32Port}`;
+
+  const durationMs = Math.min(5000, Math.max(500,
+    parseInt(String(req.query['duration_ms'] ?? '3000'), 10) || 3000));
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), durationMs + 8000);
+    req.on('close', () => { clearTimeout(timer); controller.abort(); });
+
+    const esp32Res = await fetch(`${base}/api/audio/record?duration_ms=${durationMs}`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!esp32Res.ok) {
+      if (!res.headersSent) res.status(esp32Res.status).json({ error: 'ESP32 recording failed' });
+      return;
+    }
+
+    const wavBuffer = await esp32Res.arrayBuffer();
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Length', String(wavBuffer.byteLength));
+    res.setHeader('Cache-Control', 'no-cache');
+    res.end(Buffer.from(wavBuffer));
+  } catch (err: unknown) {
+    if (!res.headersSent) {
+      res.status(502).json({ error: `Cannot reach ESP32: ${(err as Error).message}` });
+    }
+  }
+});
+
 export default router;

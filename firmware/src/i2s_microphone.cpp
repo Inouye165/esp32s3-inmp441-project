@@ -10,6 +10,7 @@
 static portMUX_TYPE  s_mux          = portMUX_INITIALIZER_UNLOCKED;
 static AudioLevel    s_latestLevel  = {0.0f, -90.0f, 0, 0};
 static uint32_t      s_sampleRate   = I2S_SAMPLE_RATE;
+static volatile bool s_pauseForRec  = false;  // set while handleAudioRecord owns I2S
 
 // ─── I2S driver installation ─────────────────────────────────────────────────
 
@@ -57,7 +58,17 @@ bool micInit() {
 
 // ─── Read one block and compute level ────────────────────────────────────────
 
+void micSetRecordingPause(bool pause) {
+    s_pauseForRec = pause;
+}
+
 AudioLevel micReadLevel() {
+    // Yield while the HTTP handler owns the I2S peripheral for WAV recording
+    if (s_pauseForRec) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        return micGetLatestLevel();
+    }
+
     static int32_t samples[AUDIO_BLOCK_SIZE];
     size_t bytesRead = 0;
 
