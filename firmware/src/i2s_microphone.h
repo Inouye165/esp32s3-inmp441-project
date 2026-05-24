@@ -29,3 +29,13 @@ AudioLevel micReadLevel();
 
 /** Return a snapshot of the most recently computed AudioLevel. Thread-safe. */
 AudioLevel micGetLatestLevel();
+
+/**
+ * Change the I2S sample rate at runtime (valid range: 8 000–48 000 Hz).
+ * Uses i2s_set_sample_rates() which reconfigures the clock without
+ * stopping DMA. Returns true on success.
+ */
+bool     micSetSampleRate(uint32_t rateHz);
+
+/** Return the currently configured sample rate (Hz). */
+uint32_t micGetSampleRate();

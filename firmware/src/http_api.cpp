@@ -11,7 +11,7 @@
 
 static void addCorsHeaders(WebServer& server) {
     server.sendHeader("Access-Control-Allow-Origin",  "*");
-    server.sendHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
@@ -62,7 +62,7 @@ static void handleInfo(WebServer& server) {
     JsonObject mic = doc["microphone"].to<JsonObject>();
     mic["type"]        = MIC_TYPE;
     mic["interface"]   = "I2S";
-    mic["sample_rate"] = I2S_SAMPLE_RATE;
+    mic["sample_rate"] = micGetSampleRate();   // live value, not compile-time constant
     mic["bits"]        = I2S_BITS;
     mic["channel"]     = "Left (L/R=GND)";
 
@@ -94,6 +94,48 @@ static void handleAudioLevel(WebServer& server) {
     server.send(200, "application/json", body);
 }
 
+// POST /api/audio/config  { "sample_rate": 44100 }
+static void handleAudioConfig(WebServer& server) {
+    addCorsHeaders(server);
+
+    // GET — return current config and limits
+    if (server.method() == HTTP_GET) {
+        JsonDocument doc;
+        doc["sample_rate"] = micGetSampleRate();
+        doc["min_hz"]      = 8000;
+        doc["max_hz"]      = 48000;
+        String body;
+        serializeJson(doc, body);
+        server.send(200, "application/json", body);
+        return;
+    }
+
+    // POST — change sample rate
+    if (!server.hasArg("plain") || server.arg("plain").length() == 0) {
+        server.send(400, "application/json", "{\"error\":\"Request body required\"}");
+        return;
+    }
+    JsonDocument req;
+    DeserializationError err = deserializeJson(req, server.arg("plain"));
+    if (err || !req["sample_rate"].is<uint32_t>()) {
+        server.send(400, "application/json", "{\"error\":\"sample_rate (integer) required\"}");
+        return;
+    }
+    const uint32_t rate = req["sample_rate"].as<uint32_t>();
+    if (!micSetSampleRate(rate)) {
+        server.send(400, "application/json",
+                    "{\"error\":\"sample_rate must be 8000\u201348000 Hz\"}");
+        return;
+    }
+    JsonDocument res;
+    res["sample_rate"] = micGetSampleRate();
+    res["min_hz"]      = 8000;
+    res["max_hz"]      = 48000;
+    String body;
+    serializeJson(res, body);
+    server.send(200, "application/json", body);
+}
+
 static void handleOptions(WebServer& server) {
     addCorsHeaders(server);
     server.send(204);
@@ -105,6 +147,8 @@ void httpApiBegin(WebServer& server) {
     server.on("/", HTTP_GET, [&server]() { handleRoot(server); });
     server.on("/api/info", HTTP_GET, [&server]() { handleInfo(server); });
     server.on("/api/audio/level", HTTP_GET, [&server]() { handleAudioLevel(server); });
+    server.on("/api/audio/config", HTTP_GET,  [&server]() { handleAudioConfig(server); });
+    server.on("/api/audio/config", HTTP_POST, [&server]() { handleAudioConfig(server); });
 
     // Handle pre-flight CORS requests
     server.onNotFound([&server]() {
@@ -121,6 +165,7 @@ void httpApiBegin(WebServer& server) {
     Serial.printf("[HTTP] Endpoints:\n");
     Serial.printf("         GET http://%s/api/info\n",          WiFi.localIP().toString().c_str());
     Serial.printf("         GET http://%s/api/audio/level\n",   WiFi.localIP().toString().c_str());
+    Serial.printf("         GET/POST http://%s/api/audio/config\n", WiFi.localIP().toString().c_str());
 }
 
 void httpApiHandle(WebServer& server) {

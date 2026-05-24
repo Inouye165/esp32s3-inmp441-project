@@ -67,4 +67,28 @@ router.get('/proxy/audio/level', async (_req: Request, res: Response) => {
   }
 });
 
+// ─── POST /api/proxy/audio/config — change ESP32 sample rate ─────────────────
+
+router.post('/proxy/audio/config', async (req: Request, res: Response) => {
+  if (!requireEsp32Config(res)) return;
+  const base = runtimeConfig.esp32Port === 80
+    ? `http://${runtimeConfig.esp32Ip}`
+    : `http://${runtimeConfig.esp32Ip}:${runtimeConfig.esp32Port}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.requestTimeoutMs);
+    const esp32Res = await fetch(`${base}/api/audio/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const data: unknown = await esp32Res.json();
+    res.status(esp32Res.status).json(data);
+  } catch (err) {
+    res.status(502).json({ error: `Cannot reach ESP32: ${(err as Error).message}` });
+  }
+});
+
 export default router;

@@ -9,6 +9,7 @@
 // the latest level without data races.
 static portMUX_TYPE  s_mux          = portMUX_INITIALIZER_UNLOCKED;
 static AudioLevel    s_latestLevel  = {0.0f, -90.0f, 0, 0};
+static uint32_t      s_sampleRate   = I2S_SAMPLE_RATE;
 
 // ─── I2S driver installation ─────────────────────────────────────────────────
 
@@ -104,4 +105,25 @@ AudioLevel micGetLatestLevel() {
     AudioLevel copy = s_latestLevel;
     taskEXIT_CRITICAL(&s_mux);
     return copy;
+}
+
+bool micSetSampleRate(uint32_t rateHz) {
+    if (rateHz < 8000 || rateHz > 48000) return false;
+    esp_err_t err = i2s_set_sample_rates(I2S_PORT, rateHz);
+    if (err == ESP_OK) {
+        taskENTER_CRITICAL(&s_mux);
+        s_sampleRate = rateHz;
+        taskEXIT_CRITICAL(&s_mux);
+        Serial.printf("[Mic] Sample rate changed to %u Hz\n", rateHz);
+    } else {
+        Serial.printf("[Mic] i2s_set_sample_rates failed: %s\n", esp_err_to_name(err));
+    }
+    return err == ESP_OK;
+}
+
+uint32_t micGetSampleRate() {
+    taskENTER_CRITICAL(&s_mux);
+    uint32_t rate = s_sampleRate;
+    taskEXIT_CRITICAL(&s_mux);
+    return rate;
 }

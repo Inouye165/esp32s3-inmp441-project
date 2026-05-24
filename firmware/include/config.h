@@ -1,10 +1,10 @@
 #pragma once
 
 // =============================================================================
-// WiFi Configuration
+// WiFi Configuration — credentials live in secrets.h (gitignored)
 // =============================================================================
-#define WIFI_SSID     "Dobby"
-#define WIFI_PASSWORD "sanmina-1"
+#include "secrets.h"
+// WIFI_SSID and WIFI_PASSWORD are defined in secrets.h
 
 // =============================================================================
 // INMP441 I2S Pin Configuration

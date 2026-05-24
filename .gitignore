@@ -2,6 +2,9 @@
 firmware/.pio/
 firmware/.pioenvs/
 
+# ── Firmware secrets (WiFi credentials — never commit the real file) ─────────
+firmware/include/secrets.h
+
 # ── Node / Server ────────────────────────────────────────────────────────────
 server/node_modules/
 server/dist/

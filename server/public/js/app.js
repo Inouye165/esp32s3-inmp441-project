@@ -14,18 +14,27 @@
 const POLL_INTERVAL_MS      = 200;   // audio level poll
 const INFO_REFRESH_MS       = 30000; // board info refresh
 const CHART_WINDOW_POINTS   = 150;   // 30 s at 200 ms/point
+const MAX_RECORD_POINTS     = 1500;  // 5 min cap
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let chart         = null;
 let pollTimer     = null;
 let infoTimer     = null;
-let boardFetchedAt = 0;      // timestamp when board info was last fetched
-let boardUptime   = 0;       // uptime_ms from the last board fetch
+let boardFetchedAt = 0;
+let boardUptime   = 0;
+
+// Recording state
+let recordBuffer  = [];   // [{ts, db}] while recording / after stop
+let isRecording   = false;
+let recordStart   = 0;
+let replayTimer   = null;
+let recTimerTick  = null;
 
 // ─── DOM refs (resolved once on DOMContentLoaded) ─────────────────────────────
 
 let elStatus, elCurrentDb, elMeter, elChartOverlay, elUptime;
+let elRecordBtn, elStopBtn, elReplayBtn, elRecDuration, elRateSelect;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -35,23 +44,75 @@ document.addEventListener('DOMContentLoaded', () => {
   elMeter        = document.getElementById('level-meter');
   elChartOverlay = document.getElementById('chart-overlay');
   elUptime       = document.getElementById('uptime-display');
+  elRecordBtn    = document.getElementById('record-btn');
+  elStopBtn      = document.getElementById('stop-btn');
+  elReplayBtn    = document.getElementById('replay-btn');
+  elRecDuration  = document.getElementById('rec-duration');
+  elRateSelect   = document.getElementById('sample-rate-select');
 
   initChart();
   loadSavedConfig();
 
   document.getElementById('connect-btn').addEventListener('click', onConnectClick);
   document.getElementById('refresh-info-btn').addEventListener('click', () => fetchBoardInfo());
+  elRecordBtn.addEventListener('click', startRecording);
+  elStopBtn.addEventListener('click',   stopRecording);
+  elReplayBtn.addEventListener('click', startReplay);
+  elRateSelect.addEventListener('change', () => setSampleRate(parseInt(elRateSelect.value, 10)));
 });
 
-// ─── Config persistence (localStorage) ───────────────────────────────────────
+// ─── Safe localStorage wrapper (Edge Tracking Prevention safe) ───────────────
+
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function storageSet(key, val) {
+  try { localStorage.setItem(key, val); } catch { /* blocked by Tracking Prevention */ }
+}
+
+// ─── Config persistence ───────────────────────────────────────────────────────
 
 function loadSavedConfig() {
-  const ip   = localStorage.getItem('esp32ip')   || '';
-  const port = localStorage.getItem('esp32port') || '80';
+  const ip   = storageGet('esp32ip')   || '';
+  const port = storageGet('esp32port') || '80';
   if (ip) {
     document.getElementById('esp32-ip-input').value   = ip;
     document.getElementById('esp32-port-input').value = port;
+    // Auto-reconnect on page load if we have a saved IP
+    autoConnect(ip, parseInt(port, 10) || 80);
+  } else {
+    // No saved IP — fetch current server config and auto-connect if set
+    autoConnectFromServer();
   }
+}
+
+async function autoConnect(ip, port) {
+  try {
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip, port }),
+    });
+  } catch { /* ignore — proxy still has .env value */ }
+  setStatus('connecting', ip);
+  await fetchBoardInfo();
+  startPolling();
+}
+
+// Fallback: read server config (from .env) and auto-connect if an IP is set
+async function autoConnectFromServer() {
+  try {
+    const res = await fetch('/api/config');
+    if (!res.ok) return;
+    const cfg = await res.json();
+    if (cfg.ip) {
+      document.getElementById('esp32-ip-input').value   = cfg.ip;
+      document.getElementById('esp32-port-input').value = String(cfg.port || 80);
+      setStatus('connecting', cfg.ip);
+      await fetchBoardInfo();
+      startPolling();
+    }
+  } catch { /* server not ready yet */ }
 }
 
 async function onConnectClick() {
@@ -80,8 +141,8 @@ async function onConnectClick() {
     return;
   }
 
-  localStorage.setItem('esp32ip', ip);
-  localStorage.setItem('esp32port', String(port));
+  storageSet('esp32ip', ip);
+  storageSet('esp32port', String(port));
 
   setStatus('connecting', ip);
   stopPolling();
@@ -140,6 +201,12 @@ function renderBoardInfo(info) {
   setText('pin-sck',       `GPIO ${mic.pins.sck}`);
   setText('pin-ws',        `GPIO ${mic.pins.ws}`);
   setText('pin-sd',        `GPIO ${mic.pins.sd}`);
+
+  // Sync sample rate selector
+  if (elRateSelect) {
+    elRateSelect.value   = String(mic.sample_rate);
+    elRateSelect.disabled = false;
+  }
 }
 
 // ─── Audio polling ────────────────────────────────────────────────────────────
@@ -162,6 +229,10 @@ async function pollAudioLevel() {
     updateLevelDisplay(data.db_fs);
     updateChart(data.db_fs);
     updateUptime();
+    // Record data point if recording is active
+    if (isRecording && recordBuffer.length < MAX_RECORD_POINTS) {
+      recordBuffer.push({ ts: Date.now(), db: data.db_fs });
+    }
   } catch {
     // silent — keep trying; connection errors are surfaced on the info fetch
   }
@@ -189,7 +260,7 @@ function updateLevelDisplay(dbfs) {
 
 function initChart() {
   const ctx = document.getElementById('audioChart').getContext('2d');
-  const emptyData = new Array(CHART_WINDOW_POINTS).fill(null);
+  const emptyData   = new Array(CHART_WINDOW_POINTS).fill(null);
   const emptyLabels = new Array(CHART_WINDOW_POINTS).fill('');
 
   chart = new Chart(ctx, {
@@ -215,21 +286,58 @@ function initChart() {
       interaction: { mode: 'nearest', intersect: false },
       scales: {
         y: {
+          // 0 dBFS at top = loudest; −90 dBFS at bottom = silence (louder → up)
           min: -90,
           max: 0,
           grid: { color: 'rgba(255,255,255,0.05)' },
           ticks: { color: '#6c757d', callback: (v) => `${v} dB` },
-          title: { display: true, text: 'dBFS', color: '#6c757d', font: { size: 11 } },
+          title: { display: true, text: 'Loud ↑  dBFS  ↓ Quiet', color: '#6c757d', font: { size: 11 } },
         },
-        x: {
-          display: false,
-        },
+        x: { display: false },
       },
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
             label: (ctx) => ` ${ctx.parsed.y.toFixed(1)} dBFS`,
+          },
+        },
+        annotation: {
+          annotations: {
+            // Coloured background zones
+            quietZone: {
+              type: 'box', yMin: -90, yMax: -40,
+              backgroundColor: 'rgba(0,255,136,0.06)', borderWidth: 0,
+            },
+            moderateZone: {
+              type: 'box', yMin: -40, yMax: -20,
+              backgroundColor: 'rgba(255,170,0,0.06)', borderWidth: 0,
+            },
+            loudZone: {
+              type: 'box', yMin: -20, yMax: 0,
+              backgroundColor: 'rgba(255,68,68,0.08)', borderWidth: 0,
+            },
+            // Threshold lines
+            quietLine: {
+              type: 'line', yMin: -40, yMax: -40,
+              borderColor: 'rgba(0,255,136,0.55)', borderWidth: 1,
+              borderDash: [6, 3],
+              label: {
+                display: true, content: '−40 dB', position: 'end',
+                color: '#00ff88', backgroundColor: 'transparent',
+                font: { size: 10 },
+              },
+            },
+            loudLine: {
+              type: 'line', yMin: -20, yMax: -20,
+              borderColor: 'rgba(255,68,68,0.55)', borderWidth: 1,
+              borderDash: [6, 3],
+              label: {
+                display: true, content: '−20 dB', position: 'end',
+                color: '#ff4444', backgroundColor: 'transparent',
+                font: { size: 10 },
+              },
+            },
           },
         },
       },
@@ -297,4 +405,82 @@ function rssiBar(rssi) {
   if (rssi >= -70) return '▂▄▆░';
   if (rssi >= -80) return '▂▄░░';
   return '▂░░░';
+}
+
+// ─── Recording ────────────────────────────────────────────────────────────────
+
+function startRecording() {
+  recordBuffer = [];
+  isRecording  = true;
+  recordStart  = Date.now();
+  elRecordBtn.disabled = true;
+  elStopBtn.disabled   = false;
+  elReplayBtn.disabled = true;
+  elRecDuration.textContent = '● 0s';
+  recTimerTick = setInterval(() => {
+    const s = Math.round((Date.now() - recordStart) / 1000);
+    elRecDuration.textContent = `● ${s}s`;
+    if (recordBuffer.length >= MAX_RECORD_POINTS) stopRecording();
+  }, 1000);
+}
+
+function stopRecording() {
+  isRecording = false;
+  clearInterval(recTimerTick);
+  elRecordBtn.disabled = false;
+  elStopBtn.disabled   = true;
+  elReplayBtn.disabled = recordBuffer.length === 0;
+  const s = Math.round((Date.now() - recordStart) / 1000);
+  elRecDuration.textContent = `${recordBuffer.length} pts / ${s}s`;
+}
+
+function startReplay() {
+  if (!recordBuffer.length) return;
+  stopPolling();
+  let i = 0;
+  elReplayBtn.disabled = true;
+  elRecordBtn.disabled = true;
+  elRecDuration.textContent = `▶ 0 / ${recordBuffer.length}`;
+
+  replayTimer = setInterval(() => {
+    if (i >= recordBuffer.length) {
+      stopReplay();
+      return;
+    }
+    const db = recordBuffer[i++].db;
+    updateLevelDisplay(db);
+    updateChart(db);
+    elRecDuration.textContent = `▶ ${i} / ${recordBuffer.length}`;
+  }, POLL_INTERVAL_MS);
+}
+
+function stopReplay() {
+  clearInterval(replayTimer);
+  replayTimer = null;
+  elReplayBtn.disabled = false;
+  elRecordBtn.disabled = false;
+  elRecDuration.textContent = `${recordBuffer.length} pts`;
+  startPolling(); // resume live feed
+}
+
+// ─── Sample rate ──────────────────────────────────────────────────────────────
+
+async function setSampleRate(rate) {
+  try {
+    const res = await fetch('/api/proxy/audio/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sample_rate: rate }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(`Sample rate change failed: ${data.error || res.status}`);
+      await fetchBoardInfo(); // refresh to restore correct displayed value
+      return;
+    }
+    // Update the wiring table display to match new rate
+    setText('mic-rate', `${data.sample_rate.toLocaleString()} Hz`);
+  } catch (err) {
+    alert(`Could not reach server: ${err.message}`);
+  }
 }
