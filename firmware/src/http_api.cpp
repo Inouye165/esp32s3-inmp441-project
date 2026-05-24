@@ -32,9 +32,21 @@ static void handleInfo(WebServer& server) {
     esp_flash_get_size(nullptr, &flashSize);
 
     JsonDocument doc;
+    // Map the ESP-IDF chip model enum to a human-readable string
+    const char* chipModelStr;
+    switch (chip.model) {
+        case CHIP_ESP32:   chipModelStr = "ESP32";    break;
+        case CHIP_ESP32S2: chipModelStr = "ESP32-S2"; break;
+        case CHIP_ESP32S3: chipModelStr = "ESP32-S3"; break;
+        case CHIP_ESP32C3: chipModelStr = "ESP32-C3"; break;
+        case CHIP_ESP32C6: chipModelStr = "ESP32-C6"; break;
+        case CHIP_ESP32H2: chipModelStr = "ESP32-H2"; break;
+        default:           chipModelStr = "ESP32 (unknown)"; break;
+    }
+
     doc["firmware_version"]   = FIRMWARE_VERSION;
     doc["board"]              = BOARD_NAME;
-    doc["chip_model"]         = "ESP32-S3";
+    doc["chip_model"]         = chipModelStr;
     doc["chip_revision"]      = chip.revision;
     doc["chip_cores"]         = chip.cores;
     doc["flash_size_bytes"]   = flashSize;

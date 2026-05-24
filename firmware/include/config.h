@@ -47,5 +47,5 @@
 // Board Identity
 // =============================================================================
 #define FIRMWARE_VERSION  "1.0.0"
-#define BOARD_NAME        "ESP32-S3-DevKitC-1"
+#define BOARD_NAME        "ESP32-DevKit"
 #define MIC_TYPE          "INMP441"
