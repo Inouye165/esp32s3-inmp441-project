@@ -35,7 +35,7 @@ let audioBlob     = null;  // Blob containing recorded WAV
 let audioUrl      = null;  // object URL for the WAV blob
 let currentAudio  = null;  // currently playing Audio element
 let recordAbort   = null;  // AbortController for in-progress recording fetch
-const RECORD_DURATION_MS = 5000; // 5-second recordings
+const RECORD_DURATION_MS = 3000; // 3-second recordings — 96 KB at 16 kHz, safe for ESP32 heap
 
 // ─── DOM refs (resolved once on DOMContentLoaded) ─────────────────────────────
 

@@ -177,7 +177,7 @@ static void handleAudioRecord(WebServer& server) {
     const uint32_t nSamp  = (RATE * durationMs) / 1000;
     const uint32_t nBytes = nSamp * sizeof(int16_t);
 
-    if (ESP.getFreeHeap() < nBytes + 32768) {
+    if (ESP.getMaxAllocHeap() < nBytes + 16384) {
         server.send(507, "application/json",
                     "{\"error\":\"insufficient heap for recording\"}");
         return;
