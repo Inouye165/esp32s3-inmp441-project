@@ -106,7 +106,7 @@ router.get('/proxy/audio/record', async (req: Request, res: Response) => {
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), durationMs + 8000);
+    const timer = setTimeout(() => controller.abort(), durationMs + 12000);
     req.on('close', () => { clearTimeout(timer); controller.abort(); });
 
     const esp32Res = await fetch(`${base}/api/audio/record?duration_ms=${durationMs}`, {

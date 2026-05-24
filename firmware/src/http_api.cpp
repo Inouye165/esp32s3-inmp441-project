@@ -173,68 +173,48 @@ static void handleAudioRecord(WebServer& server) {
         durationMs = (uint32_t)max(500, min(5000, v));
     }
 
-    const uint32_t RATE   = 16000;          // 16 kHz — good speech quality
+    // Use current sample rate — avoids switching the I2S clock (causes static at low rates)
+    const uint32_t RATE   = micGetSampleRate();
     const uint32_t nSamp  = (RATE * durationMs) / 1000;
     const uint32_t nBytes = nSamp * sizeof(int16_t);
 
-    if (ESP.getMaxAllocHeap() < nBytes + 16384) {
-        server.send(507, "application/json",
-                    "{\"error\":\"insufficient heap for recording\"}");
-        return;
-    }
+    // Build WAV header — exact size known upfront, no large malloc needed
+    uint8_t header[44];
+    buildWavHeader(header, RATE, nBytes);
 
-    int16_t* buf = (int16_t*)malloc(nBytes);
-    if (!buf) {
-        server.send(507, "application/json", "{\"error\":\"malloc failed\"}");
-        return;
-    }
-
-    // Take exclusive ownership of I2S
+    // Take exclusive ownership of I2S (no rate change needed)
     micSetRecordingPause(true);
-    const uint32_t prevRate = micGetSampleRate();
-    i2s_set_sample_rates(I2S_PORT, RATE);
 
     // Flush stale DMA samples (one buffer's worth)
     { int32_t tmp[I2S_DMA_BUF_LEN]; size_t b = 0;
       i2s_read(I2S_PORT, tmp, sizeof(tmp), &b, pdMS_TO_TICKS(200)); }
 
-    // Record
-    uint32_t recorded = 0;
-    while (recorded < nSamp) {
-        int32_t raw[64];
-        size_t  got = 0;
-        uint32_t want = min((uint32_t)64, nSamp - recorded);
-        i2s_read(I2S_PORT, raw, want * sizeof(int32_t), &got, pdMS_TO_TICKS(1000));
-        uint32_t n = got / sizeof(int32_t);
-        for (uint32_t i = 0; i < n; i++) {
-            // INMP441: 24-bit left-justified in 32-bit frame → top 16 bits
-            buf[recorded++] = (int16_t)(raw[i] >> 16);
-        }
-    }
-
-    // Restore and release
-    i2s_set_sample_rates(I2S_PORT, prevRate);
-    micSetRecordingPause(false);
-
-    // Send WAV
-    uint8_t header[44];
-    buildWavHeader(header, RATE, nBytes);
-
+    // Stream response: send WAV header then PCM in small stack-allocated chunks
     server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
     server.sendHeader("Cache-Control", "no-cache");
     server.setContentLength(44 + nBytes);
     server.send(200, "audio/wav", "");
     server.sendContent((const char*)header, 44);
 
-    const uint32_t TX = 1024;
-    const uint8_t* p = (const uint8_t*)buf;
-    uint32_t left = nBytes;
-    while (left > 0) {
-        uint32_t chunk = min(TX, left);
-        server.sendContent((const char*)p, chunk);
-        p += chunk; left -= chunk;
+    // 64 frames × 4 bytes = 256-byte raw buffer; 64 × 2 bytes = 128-byte PCM output
+    static const uint32_t CHUNK = 64;
+    int32_t raw[CHUNK];
+    int16_t pcm[CHUNK];
+    uint32_t recorded = 0;
+
+    while (recorded < nSamp) {
+        size_t   bytesRead = 0;
+        uint32_t want = min(CHUNK, nSamp - recorded);
+        i2s_read(I2S_PORT, raw, want * sizeof(int32_t), &bytesRead, pdMS_TO_TICKS(1000));
+        uint32_t n = bytesRead / sizeof(int32_t);
+        for (uint32_t i = 0; i < n; i++) {
+            pcm[i] = (int16_t)(raw[i] >> 16);  // top 16 of 24-bit INMP441 frame
+        }
+        server.sendContent((const char*)pcm, n * sizeof(int16_t));
+        recorded += n;
     }
-    free(buf);
+
+    micSetRecordingPause(false);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
