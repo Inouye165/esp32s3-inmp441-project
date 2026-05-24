@@ -184,11 +184,14 @@ static void handleAudioRecord(WebServer& server) {
 
     // Take exclusive ownership of I2S (no rate change needed)
     micSetRecordingPause(true);
-    // micReadLevel() uses portMAX_DELAY — give micTask up to one full read cycle
-    // (~12 ms at 44 kHz) plus margin before we touch the I2S peripheral.
+    // micReadLevel() holds i2s_read(portMAX_DELAY) — give it time to exit
     vTaskDelay(pdMS_TO_TICKS(50));
-    // Wipe all DMA buffers so recording starts with fresh data
-    i2s_zero_dma_buffer(I2S_PORT);
+
+    // Drain all stale DMA buffers by reading them out (do NOT call
+    // i2s_zero_dma_buffer — that is unreliable on RX-only ports)
+    { int32_t drain[I2S_DMA_BUF_LEN]; size_t b = 0;
+      for (int d = 0; d < I2S_DMA_BUF_COUNT + 1; d++)
+          i2s_read(I2S_PORT, drain, sizeof(drain), &b, pdMS_TO_TICKS(100)); }
 
     // Stream response: send WAV header then PCM in small stack-allocated chunks
     server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
@@ -209,7 +212,13 @@ static void handleAudioRecord(WebServer& server) {
         i2s_read(I2S_PORT, raw, want * sizeof(int32_t), &bytesRead, pdMS_TO_TICKS(1000));
         uint32_t n = bytesRead / sizeof(int32_t);
         for (uint32_t i = 0; i < n; i++) {
-            pcm[i] = (int16_t)(raw[i] >> 16);  // top 16 of 24-bit INMP441 frame
+            // INMP441: 24-bit audio in bits 31:8 of 32-bit DMA word.
+            // Direct >> 16 gives the top 8 bits — far too quiet for room-level audio.
+            // Apply 16× gain (24 dB): use >> 12 = (24-bit value >> 4), then clamp.
+            int32_t s = raw[i] >> 12;
+            if      (s >  32767) s =  32767;
+            else if (s < -32768) s = -32768;
+            pcm[i] = (int16_t)s;
         }
         server.sendContent((const char*)pcm, n * sizeof(int16_t));
         recorded += n;
