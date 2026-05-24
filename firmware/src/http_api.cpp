@@ -184,10 +184,11 @@ static void handleAudioRecord(WebServer& server) {
 
     // Take exclusive ownership of I2S (no rate change needed)
     micSetRecordingPause(true);
-
-    // Flush stale DMA samples (one buffer's worth)
-    { int32_t tmp[I2S_DMA_BUF_LEN]; size_t b = 0;
-      i2s_read(I2S_PORT, tmp, sizeof(tmp), &b, pdMS_TO_TICKS(200)); }
+    // micReadLevel() uses portMAX_DELAY — give micTask up to one full read cycle
+    // (~12 ms at 44 kHz) plus margin before we touch the I2S peripheral.
+    vTaskDelay(pdMS_TO_TICKS(50));
+    // Wipe all DMA buffers so recording starts with fresh data
+    i2s_zero_dma_buffer(I2S_PORT);
 
     // Stream response: send WAV header then PCM in small stack-allocated chunks
     server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
