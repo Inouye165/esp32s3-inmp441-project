@@ -224,7 +224,13 @@ function stopPolling() {
 async function pollAudioLevel() {
   try {
     const res = await fetch('/api/proxy/audio/level');
-    if (!res.ok) return;
+    if (!res.ok) {
+      // Record a null gap so timing is preserved during replay
+      if (isRecording && recordBuffer.length < MAX_RECORD_POINTS) {
+        recordBuffer.push({ ts: Date.now(), db: null });
+      }
+      return;
+    }
     const data = await res.json();
     updateLevelDisplay(data.db_fs);
     updateChart(data.db_fs);
@@ -235,6 +241,9 @@ async function pollAudioLevel() {
     }
   } catch {
     // silent — keep trying; connection errors are surfaced on the info fetch
+    if (isRecording && recordBuffer.length < MAX_RECORD_POINTS) {
+      recordBuffer.push({ ts: Date.now(), db: null });
+    }
   }
 }
 
@@ -429,14 +438,27 @@ function stopRecording() {
   clearInterval(recTimerTick);
   elRecordBtn.disabled = false;
   elStopBtn.disabled   = true;
-  elReplayBtn.disabled = recordBuffer.length === 0;
+  const validPts = recordBuffer.filter(p => p.db !== null).length;
+  elReplayBtn.disabled = validPts === 0;
   const s = Math.round((Date.now() - recordStart) / 1000);
-  elRecDuration.textContent = `${recordBuffer.length} pts / ${s}s`;
+  if (validPts === 0) {
+    elRecDuration.textContent = `⚠ 0 pts captured (ESP32 unreachable during recording)`;
+  } else {
+    elRecDuration.textContent = `${validPts} pts / ${s}s — ready to replay`;
+  }
 }
 
 function startReplay() {
-  if (!recordBuffer.length) return;
+  const validPts = recordBuffer.filter(p => p.db !== null).length;
+  if (validPts === 0) return;
   stopPolling();
+
+  // Clear chart so replay data is visible from the start
+  if (chart) {
+    chart.data.datasets[0].data = new Array(CHART_WINDOW_POINTS).fill(null);
+    chart.update('none');
+  }
+
   let i = 0;
   elReplayBtn.disabled = true;
   elRecordBtn.disabled = true;
@@ -447,9 +469,9 @@ function startReplay() {
       stopReplay();
       return;
     }
-    const db = recordBuffer[i++].db;
-    updateLevelDisplay(db);
-    updateChart(db);
+    const db = recordBuffer[i++].db;  // may be null (gap during recording)
+    if (db !== null) updateLevelDisplay(db);
+    updateChart(db);                  // null = gap in chart line
     elRecDuration.textContent = `▶ ${i} / ${recordBuffer.length}`;
   }, POLL_INTERVAL_MS);
 }
