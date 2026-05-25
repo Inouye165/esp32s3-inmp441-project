@@ -283,6 +283,28 @@ function formatTimestampForFilename(ms: number): string {
        + `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
 }
 
+// Historical dBFS timeline for a span, used by the dashboard to render the
+// playback timeline chart (so the user can see and click loud peaks in the
+// past). Capped at the same 30 min as audio-range.
+router.get('/archive/db-series', async (req: Request, res: Response) => {
+  const startMs = parseInt(String(req.query['start_ms'] ?? ''), 10);
+  const endMs   = parseInt(String(req.query['end_ms']   ?? ''), 10);
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    res.status(400).json({ error: 'start_ms and end_ms (end > start) are required' });
+    return;
+  }
+  if (endMs - startMs > MAX_RANGE_MS) {
+    res.status(400).json({ error: `Range too large (max ${MAX_RANGE_MS / 60000} min)` });
+    return;
+  }
+  try {
+    const samples = await archiveRecorder.getDbSeriesInRange(startMs, endMs);
+    res.json({ start_ms: startMs, end_ms: endMs, samples });
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 // Recent dBFS samples derived from saved archive chunks. Lets the browser
 // drive its live waveform from the archive when the ESP32 is busy serving
 // the next recording. `since_ms` returns only samples newer than that

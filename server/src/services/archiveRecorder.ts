@@ -170,6 +170,28 @@ class ArchiveRecorderService extends EventEmitter {
       .sort((a, b) => a.start_ms - b.start_ms);
   }
 
+  // Computes a 200 ms-window dBFS timeline by reading the .wav files in
+  // [startMs, endMs] and reducing each chunk's PCM. Lets the dashboard
+  // render the historical waveform around the playback cursor so the user
+  // can see and click on loud peaks (barks, doors) for a past time.
+  async getDbSeriesInRange(startMs: number, endMs: number): Promise<ArchiveLiveSample[]> {
+    const chunks = this.getChunkFilesInRange(startMs, endMs);
+    const out: ArchiveLiveSample[] = [];
+    for (const chunk of chunks) {
+      try {
+        const buf = await fs.readFile(chunk.absolute_path);
+        const wav = parseWavMetadata(buf);
+        const samples = computeLiveSamples(wav.pcm, wav.sampleRate, chunk.start_ms);
+        for (const s of samples) {
+          if (s.t_ms >= startMs && s.t_ms <= endMs) out.push(s);
+        }
+      } catch {
+        // skip unreadable chunk
+      }
+    }
+    return out;
+  }
+
   private async runLoop() {
     while (this.enabled) {
       const baseUrl = buildEsp32BaseUrl();

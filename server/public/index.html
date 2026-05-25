@@ -244,11 +244,49 @@
           </div>
 
           <audio id="archive-audio" class="w-100 mb-3" controls preload="metadata"></audio>
-          <div class="text-secondary small mb-2">
+
+          <!-- Continuous playback timeline ─────────────────────────────────
+               Plays forward across chunk boundaries indefinitely.
+               Chart shows the dBFS waveform for the loaded window; a red
+               cursor moves with playback. Click the chart to seek by
+               time, not by file. -->
+          <div class="border-top border-secondary pt-3 mt-2">
+            <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
+              <button id="playback-play-btn"  class="btn btn-sm btn-success" disabled>▶ Play from here</button>
+              <button id="playback-pause-btn" class="btn btn-sm btn-outline-light" disabled>⏸ Pause</button>
+              <button id="playback-stop-btn"  class="btn btn-sm btn-outline-secondary" disabled>■ Stop</button>
+              <span class="vr"></span>
+              <span class="text-secondary small">Jump</span>
+              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="-600000">⏮ −10m</button>
+              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="-60000">−1m</button>
+              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="-10000">−10s</button>
+              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="10000">+10s</button>
+              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="60000">+1m</button>
+              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="600000">+10m ⏭</button>
+              <span id="playback-cursor-time" class="text-info small ms-auto font-mono">—</span>
+            </div>
+            <div style="position: relative; height: 140px;">
+              <canvas id="playbackChart"></canvas>
+              <div id="playback-overlay"
+                   class="position-absolute top-50 start-50 translate-middle text-secondary text-center small">
+                Select a time above and press <strong>▶ Play from here</strong> to play continuously.<br>
+                Click on the waveform below to jump to that exact moment.
+              </div>
+            </div>
+            <div class="d-flex justify-content-between text-secondary small">
+              <span id="playback-window-start">—</span>
+              <span id="playback-status" class="text-secondary">idle</span>
+              <span id="playback-window-end">—</span>
+            </div>
+          </div>
+
+          <div class="text-secondary small mt-3 mb-2">
             Audio is recorded continuously on the server in short WAV chunks (≈2 s each).
             Use the slider <em>or click directly on the live waveform above</em> to set the start time,
-            pick a duration, then press <strong>Play Selection</strong> for continuous playback,
-            or <strong>Download .wav</strong> to save the entire span as a single file you can share or email.
+            pick a duration, then press <strong>Play Selection</strong> for a fixed-length clip,
+            or <strong>Download .wav</strong> to save and share it.
+            For open-ended listening (5, 10, 100 minutes — whatever) use <strong>▶ Play from here</strong>:
+            the player jumps chunk boundaries automatically and waits for new audio if you catch up to live.
             Recording is never interrupted by playback.
           </div>
           <div id="archive-chunk-list" class="archive-chunk-list small text-secondary"></div>

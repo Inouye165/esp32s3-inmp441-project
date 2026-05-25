@@ -34,6 +34,20 @@ let archiveLiveFollow = false;
 let archiveLiveFollowTimer = null;
 let archiveLiveChunkId = null;
 
+// Continuous timeline playback (chunk-spanning). The user picks a wall-clock
+// time T and presses Play From Here; we load PLAYBACK_LOAD_MS of audio into
+// one stitched WAV and start playing. When that WAV `ended`, we load the
+// next window starting at playbackWindowEndMs and keep going. The user can
+// click anywhere on the playback timeline chart to seek by *time*, not file.
+const PLAYBACK_LOAD_MS  = 5 * 60 * 1000;   // 5 min per fetch
+const PLAYBACK_RETRY_MS = 2000;            // wait if live tail not yet recorded
+let playbackChart        = null;
+let playbackContinuous   = false;
+let playbackWindowStartMs = null;
+let playbackWindowEndMs   = null;
+let playbackRetryTimer    = null;
+let playbackTickTimer     = null;
+
 // Recording state
 let recordBuffer  = [];   // [{ts, db}] computed from WAV for visual chart replay
 let isRecording   = false;
@@ -66,6 +80,8 @@ let elArchiveOlderBtn, elArchiveNewerBtn, elArchiveLatestBtn, elArchiveSlider;
 let elArchiveRangeStart, elArchiveRangeEnd, elArchiveSelectedTime, elArchiveWindowLabel;
 let elArchiveBars, elArchiveChunkList, elArchivePlaySelectionBtn, elArchiveAudio;
 let elArchiveDurationSelect, elArchiveDownloadBtn;
+let elPlaybackPlayBtn, elPlaybackPauseBtn, elPlaybackStopBtn;
+let elPlaybackCursorTime, elPlaybackWindowStart, elPlaybackWindowEnd, elPlaybackStatus, elPlaybackOverlay;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -100,8 +116,17 @@ document.addEventListener('DOMContentLoaded', () => {
   elArchiveAudio = document.getElementById('archive-audio');
   elArchiveDurationSelect = document.getElementById('archive-duration-select');
   elArchiveDownloadBtn = document.getElementById('archive-download-btn');
+  elPlaybackPlayBtn   = document.getElementById('playback-play-btn');
+  elPlaybackPauseBtn  = document.getElementById('playback-pause-btn');
+  elPlaybackStopBtn   = document.getElementById('playback-stop-btn');
+  elPlaybackCursorTime  = document.getElementById('playback-cursor-time');
+  elPlaybackWindowStart = document.getElementById('playback-window-start');
+  elPlaybackWindowEnd   = document.getElementById('playback-window-end');
+  elPlaybackStatus      = document.getElementById('playback-status');
+  elPlaybackOverlay     = document.getElementById('playback-overlay');
 
   initChart();
+  initPlaybackChart();
   loadSavedConfig();
   refreshArchiveStatus();
   archiveRefreshTimer = setInterval(refreshArchiveStatus, 15000);
@@ -126,6 +151,18 @@ document.addEventListener('DOMContentLoaded', () => {
   elArchivePlaySelectionBtn.addEventListener('click', () => playArchiveSelection());
   elArchiveDownloadBtn.addEventListener('click', () => downloadArchiveSelection());
   elArchiveDurationSelect.addEventListener('change', updateSelectionSummary);
+
+  elPlaybackPlayBtn.addEventListener('click', startContinuousPlayback);
+  elPlaybackPauseBtn.addEventListener('click', pauseContinuousPlayback);
+  elPlaybackStopBtn.addEventListener('click',  stopContinuousPlayback);
+  document.querySelectorAll('.playback-jump-btn').forEach((btn) => {
+    btn.addEventListener('click', () => jumpPlayback(parseInt(btn.dataset.jumpMs || '0', 10)));
+  });
+  // Cursor + auto-advance hooks on the shared <audio>
+  elArchiveAudio.addEventListener('timeupdate', updatePlaybackCursor);
+  elArchiveAudio.addEventListener('ended',      onContinuousAudioEnded);
+  elArchiveAudio.addEventListener('play',       () => updatePlaybackUiState());
+  elArchiveAudio.addEventListener('pause',      () => updatePlaybackUiState());
   document.querySelectorAll('.archive-window-btn').forEach((button) => {
     button.addEventListener('click', () => {
       archiveWindowMs = parseInt(button.dataset.windowMs || String(5 * 60 * 1000), 10);
@@ -650,6 +687,7 @@ function renderArchiveWindow(data) {
     elArchiveChunkList.innerHTML = '';
     elArchivePlaySelectionBtn.disabled = true;
     if (elArchiveDownloadBtn) elArchiveDownloadBtn.disabled = true;
+    if (elPlaybackPlayBtn)    elPlaybackPlayBtn.disabled    = true;
     return;
   }
 
@@ -667,6 +705,7 @@ function renderArchiveWindow(data) {
   elArchiveWindowLabel.textContent = `${archiveChunks.length} chunks loaded • ${formatDuration(rangeEnd - rangeStart)}`;
   elArchivePlaySelectionBtn.disabled = false;
   if (elArchiveDownloadBtn) elArchiveDownloadBtn.disabled = false;
+  if (elPlaybackPlayBtn)    elPlaybackPlayBtn.disabled    = false;
 
   renderArchiveBars();
   renderArchiveChunkList();
@@ -1044,3 +1083,266 @@ async function setSampleRate(rate) {
     alert(`Could not reach server: ${err.message}`);
   }
 }
+
+// ─── Continuous timeline playback ─────────────────────────────────────────────
+// Treats the archive as one infinite timeline. The user picks any wall-clock
+// time T and presses ▶ Play from here; we load a 5-min stitched WAV, play it,
+// and on `ended` automatically load the next 5 min. If the next window
+// reaches into the future (i.e. we caught up to live recording), we wait
+// PLAYBACK_RETRY_MS and try again so playback keeps flowing forward.
+
+function initPlaybackChart() {
+  const canvas = document.getElementById('playbackChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  playbackChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets: [{
+      label: 'dBFS',
+      data: [],
+      parsing: false,
+      borderColor: '#4dabf7',
+      backgroundColor: 'rgba(77,171,247,0.15)',
+      borderWidth: 1,
+      fill: true,
+      tension: 0.25,
+      pointRadius: 0,
+      spanGaps: true,
+    }]},
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: 'nearest', intersect: false },
+      onClick: (evt) => {
+        if (playbackWindowStartMs === null || playbackWindowEndMs === null) return;
+        const xScale = playbackChart.scales.x;
+        const tMs = xScale.getValueForPixel(evt.x);
+        if (!Number.isFinite(tMs)) return;
+        seekPlaybackToTime(tMs);
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          min: undefined, max: undefined,
+          ticks: {
+            color: '#6c757d',
+            font: { size: 10 },
+            maxTicksLimit: 6,
+            callback: (v) => formatClockShort(v),
+          },
+          grid: { color: 'rgba(255,255,255,0.05)' },
+        },
+        y: {
+          min: -90, max: 0,
+          ticks: { color: '#6c757d', font: { size: 10 }, callback: (v) => `${v}` },
+          grid: { color: 'rgba(255,255,255,0.05)' },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            title: (items) => formatDateTime(items[0]?.parsed?.x ?? 0),
+            label: (item) => ` ${item.parsed.y.toFixed(1)} dBFS`,
+          },
+        },
+        annotation: {
+          annotations: {
+            cursor: {
+              type: 'line',
+              xMin: 0, xMax: 0,
+              borderColor: '#ff4444',
+              borderWidth: 2,
+              display: false,
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function formatClockShort(ms) {
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function setPlaybackStatus(text) {
+  if (elPlaybackStatus) elPlaybackStatus.textContent = text;
+}
+
+function updatePlaybackUiState() {
+  const audio = elArchiveAudio;
+  const playing = audio && !audio.paused && !audio.ended;
+  if (elPlaybackPauseBtn) elPlaybackPauseBtn.disabled = !playing;
+  if (elPlaybackStopBtn)  elPlaybackStopBtn.disabled  = !playbackContinuous && (audio?.paused !== false);
+}
+
+function startContinuousPlayback() {
+  if (archiveSelectedMs === null) return;
+  // Stop any other modes
+  archiveLiveFollow = false;
+  if (archiveLiveFollowTimer) { clearInterval(archiveLiveFollowTimer); archiveLiveFollowTimer = null; }
+  elArchiveLiveBtn.textContent = 'Play Live';
+
+  playbackContinuous = true;
+  if (elPlaybackOverlay) elPlaybackOverlay.style.display = 'none';
+  loadPlaybackWindow(archiveSelectedMs, /*resumeOffsetMs=*/0, /*autoplay=*/true);
+}
+
+function pauseContinuousPlayback() {
+  const audio = elArchiveAudio;
+  if (audio && !audio.paused) audio.pause();
+  updatePlaybackUiState();
+}
+
+function stopContinuousPlayback() {
+  playbackContinuous = false;
+  if (playbackRetryTimer) { clearTimeout(playbackRetryTimer); playbackRetryTimer = null; }
+  const audio = elArchiveAudio;
+  if (audio) { audio.pause(); }
+  setPlaybackStatus('stopped');
+  updatePlaybackUiState();
+}
+
+async function loadPlaybackWindow(startMs, resumeOffsetMs, autoplay) {
+  if (playbackRetryTimer) { clearTimeout(playbackRetryTimer); playbackRetryTimer = null; }
+
+  // Find latest available archive time
+  let latest = null;
+  try {
+    const s = await fetch('/api/archive/status').then((r) => r.ok ? r.json() : null);
+    latest = s?.latest_end_ms ?? null;
+  } catch { /* ignore */ }
+
+  if (!latest || latest <= startMs + 200) {
+    // No audio yet at requested time — wait for the recorder to catch up.
+    setPlaybackStatus(`waiting for live audio at ${formatDateTime(startMs)}…`);
+    if (playbackContinuous) {
+      playbackRetryTimer = setTimeout(
+        () => loadPlaybackWindow(startMs, resumeOffsetMs, autoplay),
+        PLAYBACK_RETRY_MS,
+      );
+    }
+    return;
+  }
+
+  const endMs = Math.min(startMs + PLAYBACK_LOAD_MS, latest);
+  if (endMs <= startMs + 200) {
+    setPlaybackStatus('no audio in window');
+    return;
+  }
+
+  playbackWindowStartMs = startMs;
+  playbackWindowEndMs   = endMs;
+  if (elPlaybackWindowStart) elPlaybackWindowStart.textContent = formatDateTime(startMs);
+  if (elPlaybackWindowEnd)   elPlaybackWindowEnd.textContent   = formatDateTime(endMs);
+  setPlaybackStatus(`loading ${formatDuration(endMs - startMs)}…`);
+
+  const audio = elArchiveAudio;
+  const url = `/api/archive/audio-range?start_ms=${startMs}&end_ms=${endMs}`;
+  audio.onerror = () => {
+    const code = audio.error?.code ?? '?';
+    setPlaybackStatus(`audio error (${code})`);
+  };
+  audio.src = url;
+
+  // Seek-on-load if a resume offset was requested.
+  const applyOffset = () => {
+    if (resumeOffsetMs > 0) {
+      try { audio.currentTime = resumeOffsetMs / 1000; } catch { /* not ready */ }
+    }
+  };
+  audio.onloadedmetadata = applyOffset;
+  if (audio.readyState >= 1) applyOffset();
+
+  if (autoplay) {
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') {
+      p.catch((err) => {
+        if (err.name === 'AbortError') return;
+        setPlaybackStatus(`blocked: ${err.message || err.name}`);
+      });
+    }
+  }
+
+  // Show cursor + load waveform for this window
+  if (playbackChart) {
+    const cursor = playbackChart.options.plugins.annotation.annotations.cursor;
+    cursor.display = true;
+    cursor.xMin = startMs + resumeOffsetMs;
+    cursor.xMax = startMs + resumeOffsetMs;
+    playbackChart.options.scales.x.min = startMs;
+    playbackChart.options.scales.x.max = endMs;
+    playbackChart.data.datasets[0].data = [];
+    playbackChart.update('none');
+  }
+  loadPlaybackSeries(startMs, endMs);
+
+  setPlaybackStatus(playbackContinuous ? 'playing (continuous)' : 'playing');
+  updatePlaybackUiState();
+}
+
+async function loadPlaybackSeries(startMs, endMs) {
+  try {
+    const r = await fetch(`/api/archive/db-series?start_ms=${startMs}&end_ms=${endMs}`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (playbackWindowStartMs !== startMs || playbackWindowEndMs !== endMs) return; // stale
+    if (!playbackChart) return;
+    playbackChart.data.datasets[0].data = (data.samples || []).map((s) => ({ x: s.t_ms, y: s.db_fs }));
+    playbackChart.update('none');
+  } catch { /* ignore */ }
+}
+
+function updatePlaybackCursor() {
+  const audio = elArchiveAudio;
+  if (playbackWindowStartMs === null) return;
+  const cursorMs = playbackWindowStartMs + (audio.currentTime || 0) * 1000;
+  if (elPlaybackCursorTime) elPlaybackCursorTime.textContent = formatDateTime(cursorMs);
+  if (playbackChart) {
+    const cursor = playbackChart.options.plugins.annotation.annotations.cursor;
+    cursor.xMin = cursorMs;
+    cursor.xMax = cursorMs;
+    cursor.display = true;
+    playbackChart.update('none');
+  }
+}
+
+function onContinuousAudioEnded() {
+  if (!playbackContinuous || playbackWindowEndMs === null) return;
+  setPlaybackStatus('loading next window…');
+  loadPlaybackWindow(playbackWindowEndMs, 0, true);
+}
+
+function seekPlaybackToTime(targetMs) {
+  if (!Number.isFinite(targetMs)) return;
+  const audio = elArchiveAudio;
+  if (playbackWindowStartMs !== null
+   && playbackWindowEndMs   !== null
+   && targetMs >= playbackWindowStartMs
+   && targetMs <= playbackWindowEndMs) {
+    try { audio.currentTime = (targetMs - playbackWindowStartMs) / 1000; } catch { /* not ready */ }
+    if (audio.paused) audio.play().catch(() => {});
+    updatePlaybackCursor();
+    return;
+  }
+  // Outside current loaded window — reload a new 5-min window starting there.
+  loadPlaybackWindow(targetMs, 0, !audio.paused || playbackContinuous);
+}
+
+function jumpPlayback(deltaMs) {
+  if (!Number.isFinite(deltaMs)) return;
+  const audio = elArchiveAudio;
+  let cursorMs;
+  if (playbackWindowStartMs !== null) {
+    cursorMs = playbackWindowStartMs + (audio.currentTime || 0) * 1000;
+  } else if (archiveSelectedMs !== null) {
+    cursorMs = archiveSelectedMs;
+  } else {
+    return;
+  }
+  seekPlaybackToTime(cursorMs + deltaMs);
+}
+
