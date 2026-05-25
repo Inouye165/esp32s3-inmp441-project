@@ -159,6 +159,17 @@ class ArchiveRecorderService extends EventEmitter {
     return this.chunks.find((chunk) => chunk.id === id) ?? null;
   }
 
+  // Returns chunks whose audio overlaps [startMs, endMs], in chronological
+  // order, including their absolute file path. Used by the range-stitch
+  // endpoint to produce a single WAV for playback or download.
+  getChunkFilesInRange(startMs: number, endMs: number): StoredChunk[] {
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
+    return this.chunks
+      .filter((chunk) => chunk.end_ms > startMs && chunk.start_ms < endMs)
+      .slice()
+      .sort((a, b) => a.start_ms - b.start_ms);
+  }
+
   private async runLoop() {
     while (this.enabled) {
       const baseUrl = buildEsp32BaseUrl();

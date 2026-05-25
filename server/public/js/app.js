@@ -65,6 +65,7 @@ let elArchiveStatusBadge, elArchiveStartBtn, elArchiveStopBtn, elArchiveLiveBtn;
 let elArchiveOlderBtn, elArchiveNewerBtn, elArchiveLatestBtn, elArchiveSlider;
 let elArchiveRangeStart, elArchiveRangeEnd, elArchiveSelectedTime, elArchiveWindowLabel;
 let elArchiveBars, elArchiveChunkList, elArchivePlaySelectionBtn, elArchiveAudio;
+let elArchiveDurationSelect, elArchiveDownloadBtn;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,8 @@ document.addEventListener('DOMContentLoaded', () => {
   elArchiveChunkList = document.getElementById('archive-chunk-list');
   elArchivePlaySelectionBtn = document.getElementById('archive-play-selection-btn');
   elArchiveAudio = document.getElementById('archive-audio');
+  elArchiveDurationSelect = document.getElementById('archive-duration-select');
+  elArchiveDownloadBtn = document.getElementById('archive-download-btn');
 
   initChart();
   loadSavedConfig();
@@ -121,6 +124,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   elArchiveSlider.addEventListener('input', onArchiveSliderInput);
   elArchivePlaySelectionBtn.addEventListener('click', () => playArchiveSelection());
+  elArchiveDownloadBtn.addEventListener('click', () => downloadArchiveSelection());
+  elArchiveDurationSelect.addEventListener('change', updateSelectionSummary);
   document.querySelectorAll('.archive-window-btn').forEach((button) => {
     button.addEventListener('click', () => {
       archiveWindowMs = parseInt(button.dataset.windowMs || String(5 * 60 * 1000), 10);
@@ -430,6 +435,24 @@ function initChart() {
       maintainAspectRatio: false,
       animation: false,
       interaction: { mode: 'nearest', intersect: false },
+      onClick: (evt, _items, chartInstance) => {
+        // Map click x → timestamp. Each chart slot is POLL_INTERVAL_MS apart;
+        // the rightmost slot is “now”. Use this as a quick way to pick a
+        // start point in the very recent past without touching the slider.
+        const xScale = chartInstance.scales?.x;
+        if (!xScale) return;
+        const idx = Math.round(xScale.getValueForPixel(evt.x));
+        if (!Number.isFinite(idx)) return;
+        const slotsFromNow = (CHART_WINDOW_POINTS - 1) - clamp(idx, 0, CHART_WINDOW_POINTS - 1);
+        const targetMs = Date.now() - slotsFromNow * POLL_INTERVAL_MS;
+        const minMs = elArchiveSlider ? Number(elArchiveSlider.min) : 0;
+        const maxMs = elArchiveSlider ? Number(elArchiveSlider.max) : targetMs;
+        if (!minMs || !maxMs) return;
+        archiveSelectedMs = clamp(targetMs, minMs, maxMs);
+        if (elArchiveSlider) elArchiveSlider.value = String(archiveSelectedMs);
+        updateSelectionSummary();
+        renderArchiveBars();
+      },
       scales: {
         y: {
           // 0 dBFS at top = loudest; −90 dBFS at bottom = silence (louder → up)
@@ -626,6 +649,7 @@ function renderArchiveWindow(data) {
     elArchiveBars.innerHTML = '';
     elArchiveChunkList.innerHTML = '';
     elArchivePlaySelectionBtn.disabled = true;
+    if (elArchiveDownloadBtn) elArchiveDownloadBtn.disabled = true;
     return;
   }
 
@@ -639,9 +663,10 @@ function renderArchiveWindow(data) {
   elArchiveSlider.value = String(clamp(archiveSelectedMs, rangeStart, rangeEnd));
   elArchiveRangeStart.textContent = formatDateTime(rangeStart);
   elArchiveRangeEnd.textContent = formatDateTime(rangeEnd);
-  elArchiveSelectedTime.textContent = `Selected: ${formatDateTime(Number(elArchiveSlider.value))}`;
+  updateSelectionSummary();
   elArchiveWindowLabel.textContent = `${archiveChunks.length} chunks loaded • ${formatDuration(rangeEnd - rangeStart)}`;
   elArchivePlaySelectionBtn.disabled = false;
+  if (elArchiveDownloadBtn) elArchiveDownloadBtn.disabled = false;
 
   renderArchiveBars();
   renderArchiveChunkList();
@@ -666,27 +691,52 @@ function renderArchiveBars() {
 }
 
 function renderArchiveChunkList() {
+  // Compact summary list (no per-chunk button). The user plays/downloads
+  // arbitrary ranges via the duration selector above, so we don't need a
+  // button per 2-second clip.
   elArchiveChunkList.innerHTML = '';
-  archiveChunks.slice().reverse().forEach((chunk) => {
+  const recent = archiveChunks.slice(-12).reverse();
+  recent.forEach((chunk) => {
     const row = document.createElement('div');
-    row.className = 'archive-chunk-row';
-    const meta = document.createElement('div');
-    meta.innerHTML = `<div>${formatDateTime(chunk.start_ms)}</div><div class="text-secondary small">${formatDuration(chunk.duration_ms)} • peak ${chunk.peak_dbfs.toFixed(1)} dBFS • ${(chunk.size_bytes / 1024).toFixed(0)} KB</div>`;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'btn btn-sm btn-outline-primary';
-    button.textContent = 'Play Chunk';
-    button.addEventListener('click', () => playArchiveChunk(chunk, 0));
-    row.appendChild(meta);
-    row.appendChild(button);
+    row.className = 'd-flex justify-content-between gap-2 py-1 border-bottom border-secondary-subtle';
+    row.innerHTML = `<span>${formatDateTime(chunk.start_ms)}</span>`
+                  + `<span class="text-secondary">${formatDuration(chunk.duration_ms)} • peak ${chunk.peak_dbfs.toFixed(1)} dBFS</span>`;
     elArchiveChunkList.appendChild(row);
   });
 }
 
 function onArchiveSliderInput() {
   archiveSelectedMs = Number(elArchiveSlider.value);
-  elArchiveSelectedTime.textContent = `Selected: ${formatDateTime(archiveSelectedMs)}`;
+  updateSelectionSummary();
   renderArchiveBars();
+}
+
+function getSelectionRange() {
+  if (archiveSelectedMs === null) return null;
+  const durationMs = parseInt(elArchiveDurationSelect?.value || '60000', 10);
+  const earliest = archiveChunks[0]?.start_ms ?? archiveSelectedMs;
+  const latest = archiveChunks[archiveChunks.length - 1]?.end_ms ?? archiveSelectedMs;
+  // If the requested duration runs past the end of the archive, shift the
+  // start back so the user still gets a clip of the requested length
+  // (clamped by the earliest available chunk).
+  let start = archiveSelectedMs;
+  let end = start + durationMs;
+  if (end > latest) {
+    end = latest;
+    start = Math.max(earliest, end - durationMs);
+  }
+  if (end <= start) return null;
+  return { start, end, durationMs: end - start };
+}
+
+function updateSelectionSummary() {
+  const range = getSelectionRange();
+  if (!range) {
+    elArchiveSelectedTime.textContent = `Selected: ${formatDateTime(archiveSelectedMs)}`;
+    return;
+  }
+  elArchiveSelectedTime.textContent =
+    `${formatDateTime(range.start)} → ${formatDateTime(range.end)} (${formatDuration(range.durationMs)})`;
 }
 
 function findArchiveChunkAt(timeMs) {
@@ -737,17 +787,49 @@ function playArchiveChunk(chunk, offsetSeconds) {
 }
 
 function playArchiveSelection() {
-  if (archiveSelectedMs === null) return;
-  const chunk = findArchiveChunkAt(archiveSelectedMs);
-  if (!chunk) return;
-  const offsetSeconds = Math.max(0, (archiveSelectedMs - chunk.start_ms) / 1000);
+  const range = getSelectionRange();
+  if (!range) return;
   archiveLiveFollow = false;
   if (archiveLiveFollowTimer) {
     clearInterval(archiveLiveFollowTimer);
     archiveLiveFollowTimer = null;
   }
   elArchiveLiveBtn.textContent = 'Play Live';
-  playArchiveChunk(chunk, offsetSeconds);
+
+  const audio = elArchiveAudio;
+  const url = `/api/archive/audio-range?start_ms=${range.start}&end_ms=${range.end}`;
+  const absUrl = new URL(url, window.location.href).href;
+  if (audio.src !== absUrl) {
+    audio.onerror = null;
+    audio.src = url;
+  } else {
+    // Same range re-clicked → restart from the beginning.
+    try { audio.currentTime = 0; } catch { /* not yet loaded */ }
+  }
+  audio.onerror = () => {
+    const code = audio.error?.code ?? '?';
+    elArchiveSelectedTime.textContent = `Playback error (MediaError ${code})`;
+  };
+  const p = audio.play();
+  if (p && typeof p.catch === 'function') {
+    p.catch((err) => {
+      if (err.name === 'AbortError') return;
+      elArchiveSelectedTime.textContent = `Playback blocked: ${err.message || err.name}`;
+    });
+  }
+}
+
+function downloadArchiveSelection() {
+  const range = getSelectionRange();
+  if (!range) return;
+  // Use a temporary anchor; the server sets Content-Disposition so the
+  // browser saves with a sensible esp32-<start>-to-<end>.wav filename.
+  const a = document.createElement('a');
+  a.href = `/api/archive/audio-range?start_ms=${range.start}&end_ms=${range.end}&download=1`;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 async function toggleArchive(enabled) {

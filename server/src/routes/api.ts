@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import fs from 'fs/promises';
 import { config, runtimeConfig } from '../config';
 import { archiveRecorder } from '../services/archiveRecorder';
 import { fetchAudioLevel, fetchBoardInfo } from '../services/esp32Service';
@@ -196,6 +197,91 @@ router.get('/archive/audio/:id', (req: Request, res: Response) => {
     },
   });
 });
+
+// Stitch all chunks in [start_ms, end_ms] into one WAV. Used for both
+// continuous playback of arbitrary spans and for downloading a clip
+// (e.g. last 5 minutes) as a single .wav file.
+// Cap the span at 30 minutes so a typo cannot OOM the server.
+const MAX_RANGE_MS = 30 * 60 * 1000;
+router.get('/archive/audio-range', async (req: Request, res: Response) => {
+  const startMs = parseInt(String(req.query['start_ms'] ?? ''), 10);
+  const endMs   = parseInt(String(req.query['end_ms']   ?? ''), 10);
+  const download = String(req.query['download'] ?? '') === '1';
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    res.status(400).json({ error: 'start_ms and end_ms (end > start) are required' });
+    return;
+  }
+  if (endMs - startMs > MAX_RANGE_MS) {
+    res.status(400).json({ error: `Range too large (max ${MAX_RANGE_MS / 60000} min)` });
+    return;
+  }
+  const chunks = archiveRecorder.getChunkFilesInRange(startMs, endMs);
+  if (chunks.length === 0) {
+    res.status(404).json({ error: 'No archived audio in that range' });
+    return;
+  }
+
+  // Read each chunk, strip its 44-byte WAV header, keep PCM. Assume all
+  // chunks share the same sample-rate / channels / bit-depth (they do —
+  // the recorder uses one fixed format per session).
+  try {
+    let sampleRate = 0;
+    let numChannels = 1;
+    let bitsPerSample = 16;
+    const pcmParts: Buffer[] = [];
+    for (const chunk of chunks) {
+      const buf = await fs.readFile(chunk.absolute_path);
+      if (buf.length < 44 || buf.toString('ascii', 0, 4) !== 'RIFF') continue;
+      if (sampleRate === 0) {
+        numChannels  = buf.readUInt16LE(22);
+        sampleRate   = buf.readUInt32LE(24);
+        bitsPerSample = buf.readUInt16LE(34);
+      }
+      const dataBytes = buf.readUInt32LE(40);
+      pcmParts.push(buf.subarray(44, 44 + dataBytes));
+    }
+    if (sampleRate === 0 || pcmParts.length === 0) {
+      res.status(500).json({ error: 'Failed to read archive chunks' });
+      return;
+    }
+    const pcm = Buffer.concat(pcmParts);
+    const byteRate   = sampleRate * numChannels * (bitsPerSample / 8);
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const header = Buffer.alloc(44);
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + pcm.length, 4);
+    header.write('WAVE', 8);
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16);              // fmt chunk size
+    header.writeUInt16LE(1, 20);               // PCM
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    header.write('data', 36);
+    header.writeUInt32LE(pcm.length, 40);
+
+    const total = header.length + pcm.length;
+    res.setHeader('Content-Type', 'audio/wav');
+    res.setHeader('Content-Length', String(total));
+    res.setHeader('Cache-Control', 'no-cache');
+    if (download) {
+      const fname = `esp32-${formatTimestampForFilename(startMs)}-to-${formatTimestampForFilename(endMs)}.wav`;
+      res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    }
+    res.end(Buffer.concat([header, pcm]));
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+function formatTimestampForFilename(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-`
+       + `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
 
 // Recent dBFS samples derived from saved archive chunks. Lets the browser
 // drive its live waveform from the archive when the ESP32 is busy serving

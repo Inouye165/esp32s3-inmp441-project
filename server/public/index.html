@@ -228,14 +228,30 @@
 
           <div id="archive-chunk-bars" class="archive-bars mb-3"></div>
 
-          <div class="d-flex gap-2 flex-wrap align-items-center mb-3">
-            <button id="archive-play-selection-btn" class="btn btn-sm btn-outline-primary" disabled>Play Selected Point</button>
-            <span id="archive-window-label" class="text-secondary small">No archive loaded</span>
+          <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
+            <label for="archive-duration-select" class="text-secondary small mb-0">Duration</label>
+            <select id="archive-duration-select" class="form-select form-select-sm" style="width:auto;">
+              <option value="10000">10 sec</option>
+              <option value="30000">30 sec</option>
+              <option value="60000" selected>1 min</option>
+              <option value="300000">5 min</option>
+              <option value="600000">10 min</option>
+              <option value="1800000">30 min</option>
+            </select>
+            <button id="archive-play-selection-btn" class="btn btn-sm btn-primary" disabled>▶ Play Selection</button>
+            <button id="archive-download-btn" class="btn btn-sm btn-outline-light" disabled>⤓ Download .wav</button>
+            <span id="archive-window-label" class="text-secondary small ms-auto">No archive loaded</span>
           </div>
 
           <audio id="archive-audio" class="w-100 mb-3" controls preload="metadata"></audio>
-          <div class="text-secondary small mb-2">Audio is recorded continuously on the server in short WAV chunks. The live waveform above is driven from these chunks (about 2 s behind real time) so it keeps moving even while the ESP32 is busy capturing the next clip. Playback of stored chunks does not interrupt recording.</div>
-          <div id="archive-chunk-list" class="archive-chunk-list"></div>
+          <div class="text-secondary small mb-2">
+            Audio is recorded continuously on the server in short WAV chunks (≈2 s each).
+            Use the slider <em>or click directly on the live waveform above</em> to set the start time,
+            pick a duration, then press <strong>Play Selection</strong> for continuous playback,
+            or <strong>Download .wav</strong> to save the entire span as a single file you can share or email.
+            Recording is never interrupted by playback.
+          </div>
+          <div id="archive-chunk-list" class="archive-chunk-list small text-secondary"></div>
         </div>
       </div>
 
