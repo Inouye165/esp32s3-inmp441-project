@@ -230,7 +230,10 @@ function ensureInfoRefreshTimer() {
 
 // ─── Board info ───────────────────────────────────────────────────────────────
 
+let fetchBoardInfoInflight = false;
 async function fetchBoardInfo() {
+  if (fetchBoardInfoInflight) return; // prevent socket pile-up
+  fetchBoardInfoInflight = true;
   try {
     const res = await fetch('/api/proxy/info');
     if (!res.ok) {
@@ -248,6 +251,8 @@ async function fetchBoardInfo() {
   } catch (err) {
     if ((err.message || '').includes('aborted')) return;
     setStatus('error', err.message);
+  } finally {
+    fetchBoardInfoInflight = false;
   }
 }
 
@@ -297,7 +302,14 @@ function stopPolling() {
   if (infoTimer) { clearInterval(infoTimer); infoTimer = null; }
 }
 
+let pollAudioLevelInflight = false;
 async function pollAudioLevel() {
+  // Skip if previous request is still in flight. Without this guard, when
+  // the ESP32 is busy the server takes 200–2000 ms per response, and we'd
+  // queue dozens of requests/sec — eventually Chrome refuses new sockets
+  // (`net::ERR_INSUFFICIENT_RESOURCES`), which also blocks audio playback.
+  if (pollAudioLevelInflight) return;
+  pollAudioLevelInflight = true;
   try {
     const res = await fetch('/api/proxy/audio/level');
     if (!res.ok) return;
@@ -311,6 +323,8 @@ async function pollAudioLevel() {
     updateUptime();
   } catch {
     // silent — keep trying; connection errors are surfaced on the info fetch
+  } finally {
+    pollAudioLevelInflight = false;
   }
 }
 
