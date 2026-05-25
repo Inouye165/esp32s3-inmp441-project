@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { config, runtimeConfig } from '../config';
+import { archiveRecorder } from '../services/archiveRecorder';
 import { fetchAudioLevel, fetchBoardInfo } from '../services/esp32Service';
 
 const router = Router();
@@ -28,6 +29,7 @@ router.post('/config', (req: Request, res: Response) => {
 
   runtimeConfig.esp32Ip = ip;
   runtimeConfig.esp32Port = portNum;
+  archiveRecorder.start();
   res.json({ ip: runtimeConfig.esp32Ip, port: runtimeConfig.esp32Port });
 });
 
@@ -129,6 +131,51 @@ router.get('/proxy/audio/record', async (req: Request, res: Response) => {
       res.status(502).json({ error: `Cannot reach ESP32: ${(err as Error).message}` });
     }
   }
+});
+
+router.get('/archive/status', (_req: Request, res: Response) => {
+  res.json(archiveRecorder.getStatus());
+});
+
+router.post('/archive/start', (_req: Request, res: Response) => {
+  archiveRecorder.start();
+  res.json(archiveRecorder.getStatus());
+});
+
+router.post('/archive/stop', (_req: Request, res: Response) => {
+  archiveRecorder.stop();
+  res.json(archiveRecorder.getStatus());
+});
+
+router.get('/archive/chunks', (req: Request, res: Response) => {
+  const windowMs = Math.min(12 * 60 * 60 * 1000, Math.max(
+    60 * 1000,
+    parseInt(String(req.query['window_ms'] ?? String(5 * 60 * 1000)), 10) || (5 * 60 * 1000),
+  ));
+  const endMs = req.query['end_ms'] !== undefined
+    ? parseInt(String(req.query['end_ms']), 10) || undefined
+    : undefined;
+  res.json({
+    ...archiveRecorder.getStatus(),
+    window_ms: windowMs,
+    end_ms: endMs ?? null,
+    chunks: archiveRecorder.listChunks(windowMs, endMs),
+  });
+});
+
+router.get('/archive/audio/:id', (req: Request, res: Response) => {
+  const chunk = archiveRecorder.getChunkById(req.params.id);
+  if (!chunk) {
+    res.status(404).json({ error: 'Archive chunk not found' });
+    return;
+  }
+  res.sendFile(chunk.absolute_path, {
+    acceptRanges: true,
+    headers: {
+      'Content-Type': 'audio/wav',
+      'Cache-Control': 'no-cache',
+    },
+  });
 });
 
 export default router;

@@ -51,3 +51,48 @@ body {
 .wire-brown  { background: #6d4c41; }
 .wire-green  { background: #43a047; }
 .wire-black  { background: #212121; border-color: rgba(255,255,255,0.4); }
+
+.archive-bars {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(20px, 1fr);
+  gap: 6px;
+  min-height: 78px;
+  align-items: end;
+}
+
+.archive-bar {
+  appearance: none;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 10px 10px 4px 4px;
+  background: linear-gradient(180deg, rgba(255,170,0,0.75), rgba(0,255,136,0.25));
+  min-height: 12px;
+  cursor: pointer;
+}
+
+.archive-bar.is-selected {
+  border-color: rgba(255,255,255,0.8);
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.14);
+}
+
+.archive-chunk-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.archive-chunk-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.03);
+}
+
+.archive-chunk-row button {
+  white-space: nowrap;
+}

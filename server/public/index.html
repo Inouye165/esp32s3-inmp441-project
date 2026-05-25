@@ -195,6 +195,50 @@
         </div>
       </div>
 
+      <div class="card border-secondary">
+        <div class="card-header d-flex justify-content-between align-items-center small gap-2 flex-wrap">
+          <span class="text-secondary fw-semibold">Server Archive Timeline</span>
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <span id="archive-status-badge" class="badge bg-secondary">Archive unknown</span>
+            <button id="archive-start-btn" class="btn btn-sm btn-outline-success">Start Archive</button>
+            <button id="archive-stop-btn" class="btn btn-sm btn-outline-secondary">Stop Archive</button>
+            <button id="archive-live-btn" class="btn btn-sm btn-outline-info">Play Live</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="d-flex gap-2 flex-wrap align-items-center mb-3">
+            <span class="text-secondary small">Window</span>
+            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="300000">Last 5 min</button>
+            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="1800000">Last 30 min</button>
+            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="3600000">Last 1 hr</button>
+            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="43200000">Last 12 hr</button>
+            <button id="archive-older-btn" class="btn btn-sm btn-outline-secondary ms-auto">Older</button>
+            <button id="archive-newer-btn" class="btn btn-sm btn-outline-secondary">Newer</button>
+            <button id="archive-latest-btn" class="btn btn-sm btn-outline-secondary">Latest</button>
+          </div>
+
+          <div class="mb-2">
+            <input id="archive-point-slider" type="range" class="form-range" min="0" max="0" value="0" step="1000" disabled />
+            <div class="d-flex justify-content-between text-secondary small gap-2 flex-wrap">
+              <span id="archive-range-start">—</span>
+              <span id="archive-selected-time">No archive point selected</span>
+              <span id="archive-range-end">—</span>
+            </div>
+          </div>
+
+          <div id="archive-chunk-bars" class="archive-bars mb-3"></div>
+
+          <div class="d-flex gap-2 flex-wrap align-items-center mb-3">
+            <button id="archive-play-selection-btn" class="btn btn-sm btn-outline-primary" disabled>Play Selected Point</button>
+            <span id="archive-window-label" class="text-secondary small">No archive loaded</span>
+          </div>
+
+          <audio id="archive-audio" class="w-100 mb-3" controls preload="metadata"></audio>
+          <div class="text-secondary small mb-2">Audio is recorded continuously on the server in fixed WAV chunks. Playback of stored chunks does not interrupt recording. “Play Live” follows the newest saved chunk, so it runs with one-chunk delay instead of true sub-second streaming.</div>
+          <div id="archive-chunk-list" class="archive-chunk-list"></div>
+        </div>
+      </div>
+
     </div><!-- /right column -->
   </div><!-- /row -->
 </div><!-- /container -->

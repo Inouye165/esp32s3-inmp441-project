@@ -25,6 +25,14 @@ let pollTimer     = null;
 let infoTimer     = null;
 let boardFetchedAt = 0;
 let boardUptime   = 0;
+let archiveWindowMs = 5 * 60 * 1000;
+let archiveWindowEndMs = null;
+let archiveChunks = [];
+let archiveSelectedMs = null;
+let archiveRefreshTimer = null;
+let archiveLiveFollow = false;
+let archiveLiveFollowTimer = null;
+let archiveLiveChunkId = null;
 
 // Recording state
 let recordBuffer  = [];   // [{ts, db}] computed from WAV for visual chart replay
@@ -43,6 +51,10 @@ let recordAbort   = null;  // AbortController for in-progress recording fetch
 
 let elStatus, elCurrentDb, elMeter, elChartOverlay, elUptime;
 let elRecordBtn, elStopBtn, elReplayBtn, elDownloadBtn, elRecDuration, elRateSelect, elDurationSelect;
+let elArchiveStatusBadge, elArchiveStartBtn, elArchiveStopBtn, elArchiveLiveBtn;
+let elArchiveOlderBtn, elArchiveNewerBtn, elArchiveLatestBtn, elArchiveSlider;
+let elArchiveRangeStart, elArchiveRangeEnd, elArchiveSelectedTime, elArchiveWindowLabel;
+let elArchiveBars, elArchiveChunkList, elArchivePlaySelectionBtn, elArchiveAudio;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -59,9 +71,27 @@ document.addEventListener('DOMContentLoaded', () => {
   elRecDuration  = document.getElementById('rec-duration');
   elRateSelect   = document.getElementById('sample-rate-select');
   elDurationSelect = document.getElementById('rec-duration-select');
+  elArchiveStatusBadge = document.getElementById('archive-status-badge');
+  elArchiveStartBtn = document.getElementById('archive-start-btn');
+  elArchiveStopBtn = document.getElementById('archive-stop-btn');
+  elArchiveLiveBtn = document.getElementById('archive-live-btn');
+  elArchiveOlderBtn = document.getElementById('archive-older-btn');
+  elArchiveNewerBtn = document.getElementById('archive-newer-btn');
+  elArchiveLatestBtn = document.getElementById('archive-latest-btn');
+  elArchiveSlider = document.getElementById('archive-point-slider');
+  elArchiveRangeStart = document.getElementById('archive-range-start');
+  elArchiveRangeEnd = document.getElementById('archive-range-end');
+  elArchiveSelectedTime = document.getElementById('archive-selected-time');
+  elArchiveWindowLabel = document.getElementById('archive-window-label');
+  elArchiveBars = document.getElementById('archive-chunk-bars');
+  elArchiveChunkList = document.getElementById('archive-chunk-list');
+  elArchivePlaySelectionBtn = document.getElementById('archive-play-selection-btn');
+  elArchiveAudio = document.getElementById('archive-audio');
 
   initChart();
   loadSavedConfig();
+  refreshArchiveStatus();
+  archiveRefreshTimer = setInterval(refreshArchiveStatus, 15000);
 
   document.getElementById('connect-btn').addEventListener('click', onConnectClick);
   document.getElementById('refresh-info-btn').addEventListener('click', () => fetchBoardInfo());
@@ -69,6 +99,24 @@ document.addEventListener('DOMContentLoaded', () => {
   elStopBtn.addEventListener('click',   stopRecording);
   elReplayBtn.addEventListener('click', startReplay);
   elRateSelect.addEventListener('change', () => setSampleRate(parseInt(elRateSelect.value, 10)));
+  elArchiveStartBtn.addEventListener('click', () => toggleArchive(true));
+  elArchiveStopBtn.addEventListener('click', () => toggleArchive(false));
+  elArchiveLiveBtn.addEventListener('click', toggleArchiveLiveFollow);
+  elArchiveOlderBtn.addEventListener('click', () => shiftArchiveWindow(-1));
+  elArchiveNewerBtn.addEventListener('click', () => shiftArchiveWindow(1));
+  elArchiveLatestBtn.addEventListener('click', () => {
+    archiveWindowEndMs = null;
+    refreshArchiveStatus();
+  });
+  elArchiveSlider.addEventListener('input', onArchiveSliderInput);
+  elArchivePlaySelectionBtn.addEventListener('click', () => playArchiveSelection());
+  document.querySelectorAll('.archive-window-btn').forEach((button) => {
+    button.addEventListener('click', () => {
+      archiveWindowMs = parseInt(button.dataset.windowMs || String(5 * 60 * 1000), 10);
+      archiveWindowEndMs = null;
+      refreshArchiveStatus();
+    });
+  });
 });
 
 // ─── Safe localStorage wrapper (Edge Tracking Prevention safe) ───────────────
@@ -100,6 +148,7 @@ async function autoConnect(ip, port) {
       body: JSON.stringify({ ip, port }),
     });
   } catch { /* ignore — proxy still has .env value */ }
+  ensureInfoRefreshTimer();
   setStatus('connecting', ip);
   await fetchBoardInfo();
   startPolling();
@@ -119,6 +168,7 @@ async function autoConnectFromServer(fallbackIp = '', fallbackPort = 80) {
     document.getElementById('esp32-port-input').value = String(chosenPort);
     storageSet('esp32ip', chosenIp);
     storageSet('esp32port', String(chosenPort));
+    ensureInfoRefreshTimer();
     setStatus('connecting', chosenIp);
     await fetchBoardInfo();
     startPolling();
@@ -154,10 +204,17 @@ async function onConnectClick() {
   storageSet('esp32ip', ip);
   storageSet('esp32port', String(port));
 
+  ensureInfoRefreshTimer();
   setStatus('connecting', ip);
   stopPolling();
   await fetchBoardInfo();
   startPolling();
+}
+
+function ensureInfoRefreshTimer() {
+  if (!infoTimer) {
+    infoTimer = setInterval(fetchBoardInfo, INFO_REFRESH_MS);
+  }
 }
 
 // ─── Board info ───────────────────────────────────────────────────────────────
@@ -167,7 +224,12 @@ async function fetchBoardInfo() {
     const res = await fetch('/api/proxy/info');
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      setStatus('error', data.error || `HTTP ${res.status}`);
+      const currentIp = document.getElementById('esp32-ip-input').value.trim();
+      if (res.status === 502) {
+        setStatus('connecting', `${currentIp || 'ESP32'} busy recording archive chunk`);
+      } else {
+        setStatus('error', data.error || `HTTP ${res.status}`);
+      }
       return;
     }
     const info = await res.json();
@@ -175,13 +237,13 @@ async function fetchBoardInfo() {
     boardFetchedAt = Date.now();
     boardUptime    = info.uptime_ms;
     setStatus('connected', info.ip);
-
-    // Schedule periodic info refresh
-    if (!infoTimer) {
-      infoTimer = setInterval(fetchBoardInfo, INFO_REFRESH_MS);
-    }
   } catch (err) {
-    setStatus('error', err.message);
+    const currentIp = document.getElementById('esp32-ip-input').value.trim();
+    if ((err.message || '').includes('aborted')) {
+      setStatus('connecting', `${currentIp || 'ESP32'} busy recording archive chunk`);
+    } else {
+      setStatus('error', err.message);
+    }
   }
 }
 
@@ -411,6 +473,208 @@ function rssiBar(rssi) {
   if (rssi >= -70) return '▂▄▆░';
   if (rssi >= -80) return '▂▄░░';
   return '▂░░░';
+}
+
+function formatDateTime(ts) {
+  return new Date(ts).toLocaleString([], {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+function formatDuration(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  if (hours > 0) return `${hours}h ${String(minutes).padStart(2, '0')}m`;
+  if (minutes > 0) return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+  return `${seconds}s`;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function refreshArchiveStatus() {
+  try {
+    const res = await fetch('/api/archive/status');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const status = await res.json();
+    renderArchiveStatus(status);
+    if (archiveWindowEndMs === null) archiveWindowEndMs = status.latest_end_ms;
+    await loadArchiveChunks();
+  } catch (err) {
+    elArchiveStatusBadge.className = 'badge bg-danger';
+    elArchiveStatusBadge.textContent = `Archive error: ${err.message}`;
+  }
+}
+
+function renderArchiveStatus(status) {
+  const stateClass = status.enabled ? (status.capturing ? 'bg-success' : 'bg-warning text-dark') : 'bg-secondary';
+  const stateText = status.enabled
+    ? (status.capturing ? `Recording ${Math.round(status.chunk_ms / 1000)}s chunks` : 'Archive idle')
+    : 'Archive stopped';
+  elArchiveStatusBadge.className = `badge ${stateClass}`;
+  elArchiveStatusBadge.textContent = stateText;
+  elArchiveStartBtn.disabled = status.enabled;
+  elArchiveStopBtn.disabled = !status.enabled;
+}
+
+async function loadArchiveChunks() {
+  const params = new URLSearchParams({ window_ms: String(archiveWindowMs) });
+  if (archiveWindowEndMs) params.set('end_ms', String(archiveWindowEndMs));
+  const res = await fetch(`/api/archive/chunks?${params.toString()}`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  archiveChunks = data.chunks || [];
+  if (archiveWindowEndMs === null && data.latest_end_ms) archiveWindowEndMs = data.latest_end_ms;
+  renderArchiveWindow(data);
+  if (archiveLiveFollow) maybeAdvanceLiveFollow();
+}
+
+function renderArchiveWindow(data) {
+  const rangeStart = archiveChunks[0]?.start_ms ?? null;
+  const rangeEnd = archiveChunks[archiveChunks.length - 1]?.end_ms ?? null;
+
+  if (!rangeStart || !rangeEnd) {
+    elArchiveSlider.disabled = true;
+    elArchiveSlider.min = '0';
+    elArchiveSlider.max = '0';
+    elArchiveSlider.value = '0';
+    elArchiveRangeStart.textContent = '—';
+    elArchiveRangeEnd.textContent = '—';
+    elArchiveSelectedTime.textContent = 'No archived audio yet';
+    elArchiveWindowLabel.textContent = `Waiting for first ${Math.round(data.chunk_ms / 1000)}s archive chunk`;
+    elArchiveBars.innerHTML = '';
+    elArchiveChunkList.innerHTML = '';
+    elArchivePlaySelectionBtn.disabled = true;
+    return;
+  }
+
+  if (archiveSelectedMs === null || archiveSelectedMs < rangeStart || archiveSelectedMs > rangeEnd) {
+    archiveSelectedMs = rangeEnd;
+  }
+
+  elArchiveSlider.disabled = false;
+  elArchiveSlider.min = String(rangeStart);
+  elArchiveSlider.max = String(rangeEnd);
+  elArchiveSlider.value = String(clamp(archiveSelectedMs, rangeStart, rangeEnd));
+  elArchiveRangeStart.textContent = formatDateTime(rangeStart);
+  elArchiveRangeEnd.textContent = formatDateTime(rangeEnd);
+  elArchiveSelectedTime.textContent = `Selected: ${formatDateTime(Number(elArchiveSlider.value))}`;
+  elArchiveWindowLabel.textContent = `${archiveChunks.length} chunks loaded • ${formatDuration(rangeEnd - rangeStart)}`;
+  elArchivePlaySelectionBtn.disabled = false;
+
+  renderArchiveBars();
+  renderArchiveChunkList();
+}
+
+function renderArchiveBars() {
+  elArchiveBars.innerHTML = '';
+  archiveChunks.forEach((chunk) => {
+    const button = document.createElement('button');
+    const intensity = clamp(((chunk.peak_dbfs + 90) / 90) * 100, 10, 100);
+    button.type = 'button';
+    button.className = `archive-bar${archiveSelectedMs !== null && archiveSelectedMs >= chunk.start_ms && archiveSelectedMs <= chunk.end_ms ? ' is-selected' : ''}`;
+    button.style.height = `${intensity}%`;
+    button.title = `${formatDateTime(chunk.start_ms)} • ${formatDuration(chunk.duration_ms)} • peak ${chunk.peak_dbfs.toFixed(1)} dBFS`;
+    button.addEventListener('click', () => {
+      archiveSelectedMs = chunk.start_ms;
+      elArchiveSlider.value = String(chunk.start_ms);
+      onArchiveSliderInput();
+    });
+    elArchiveBars.appendChild(button);
+  });
+}
+
+function renderArchiveChunkList() {
+  elArchiveChunkList.innerHTML = '';
+  archiveChunks.slice().reverse().forEach((chunk) => {
+    const row = document.createElement('div');
+    row.className = 'archive-chunk-row';
+    const meta = document.createElement('div');
+    meta.innerHTML = `<div>${formatDateTime(chunk.start_ms)}</div><div class="text-secondary small">${formatDuration(chunk.duration_ms)} • peak ${chunk.peak_dbfs.toFixed(1)} dBFS • ${(chunk.size_bytes / 1024).toFixed(0)} KB</div>`;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-outline-primary';
+    button.textContent = 'Play Chunk';
+    button.addEventListener('click', () => playArchiveChunk(chunk, 0));
+    row.appendChild(meta);
+    row.appendChild(button);
+    elArchiveChunkList.appendChild(row);
+  });
+}
+
+function onArchiveSliderInput() {
+  archiveSelectedMs = Number(elArchiveSlider.value);
+  elArchiveSelectedTime.textContent = `Selected: ${formatDateTime(archiveSelectedMs)}`;
+  renderArchiveBars();
+}
+
+function findArchiveChunkAt(timeMs) {
+  return archiveChunks.find((chunk) => timeMs >= chunk.start_ms && timeMs < chunk.end_ms)
+    || archiveChunks.find((chunk) => timeMs <= chunk.end_ms)
+    || archiveChunks[archiveChunks.length - 1]
+    || null;
+}
+
+function playArchiveChunk(chunk, offsetSeconds) {
+  archiveLiveChunkId = chunk.id;
+  elArchiveAudio.src = `/api/archive/audio/${encodeURIComponent(chunk.id)}`;
+  elArchiveAudio.load();
+  elArchiveAudio.onloadedmetadata = () => {
+    elArchiveAudio.currentTime = clamp(offsetSeconds, 0, Math.max(0, (elArchiveAudio.duration || 0) - 0.05));
+    elArchiveAudio.play().catch(() => {});
+  };
+}
+
+function playArchiveSelection() {
+  if (archiveSelectedMs === null) return;
+  const chunk = findArchiveChunkAt(archiveSelectedMs);
+  if (!chunk) return;
+  const offsetSeconds = Math.max(0, (archiveSelectedMs - chunk.start_ms) / 1000);
+  archiveLiveFollow = false;
+  if (archiveLiveFollowTimer) {
+    clearInterval(archiveLiveFollowTimer);
+    archiveLiveFollowTimer = null;
+  }
+  elArchiveLiveBtn.textContent = 'Play Live';
+  playArchiveChunk(chunk, offsetSeconds);
+}
+
+async function toggleArchive(enabled) {
+  const endpoint = enabled ? '/api/archive/start' : '/api/archive/stop';
+  await fetch(endpoint, { method: 'POST' });
+  await refreshArchiveStatus();
+}
+
+function shiftArchiveWindow(direction) {
+  if (!archiveWindowEndMs) return;
+  archiveWindowEndMs += direction * archiveWindowMs;
+  archiveLiveFollow = false;
+  elArchiveLiveBtn.textContent = 'Play Live';
+  refreshArchiveStatus();
+}
+
+function toggleArchiveLiveFollow() {
+  archiveLiveFollow = !archiveLiveFollow;
+  elArchiveLiveBtn.textContent = archiveLiveFollow ? 'Stop Live' : 'Play Live';
+  if (!archiveLiveFollow) {
+    if (archiveLiveFollowTimer) clearInterval(archiveLiveFollowTimer);
+    archiveLiveFollowTimer = null;
+    return;
+  }
+  archiveWindowEndMs = null;
+  maybeAdvanceLiveFollow();
+  archiveLiveFollowTimer = setInterval(() => {
+    refreshArchiveStatus();
+  }, 5000);
+}
+
+function maybeAdvanceLiveFollow() {
+  const latest = archiveChunks[archiveChunks.length - 1];
+  if (!latest || latest.id === archiveLiveChunkId) return;
+  playArchiveChunk(latest, 0);
 }
 
 // ─── Recording ────────────────────────────────────────────────────────────────

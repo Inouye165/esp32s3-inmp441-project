@@ -51,3 +51,24 @@ export interface ApiError {
   error: string;
   statusCode?: number;
 }
+
+export interface ArchiveChunkSummary {
+  id: string;
+  start_ms: number;
+  end_ms: number;
+  duration_ms: number;
+  sample_rate: number;
+  size_bytes: number;
+  relative_path: string;
+  peak_dbfs: number;
+}
+
+export interface ArchiveStatus {
+  enabled: boolean;
+  capturing: boolean;
+  chunk_ms: number;
+  chunk_count: number;
+  earliest_start_ms: number | null;
+  latest_end_ms: number | null;
+  last_error: string | null;
+}
