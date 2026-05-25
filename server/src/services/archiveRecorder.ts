@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -5,6 +6,16 @@ import { config, runtimeConfig } from '../config';
 import { ArchiveChunkSummary, ArchiveStatus } from '../types';
 
 type StoredChunk = ArchiveChunkSummary & { absolute_path: string };
+
+// Window size used when reducing PCM to a dBFS time series for the live-feed
+// stream. 200 ms matches the frontend chart's POLL_INTERVAL_MS so each
+// archive chunk yields chunk_ms/200 chart points that drop in smoothly.
+const SAMPLE_WINDOW_MS = 200;
+
+export interface ArchiveLiveSample {
+  t_ms: number;   // wall-clock midpoint of this window
+  db_fs: number;  // -90..0
+}
 
 const INDEX_FILE = 'index.jsonl';
 
@@ -42,19 +53,54 @@ function parseWavMetadata(buffer: Buffer) {
     sampleRate,
     durationMs,
     peakDbfs: Math.max(-90, Math.min(0, peakDbfs)),
+    pcm,
   };
 }
 
-class ArchiveRecorderService {
+function computeLiveSamples(
+  pcm: Int16Array,
+  sampleRate: number,
+  startMs: number,
+): ArchiveLiveSample[] {
+  if (sampleRate <= 0 || pcm.length === 0) return [];
+  const windowSamples = Math.max(1, Math.floor((sampleRate * SAMPLE_WINDOW_MS) / 1000));
+  const samples: ArchiveLiveSample[] = [];
+  for (let offset = 0; offset < pcm.length; offset += windowSamples) {
+    const end = Math.min(pcm.length, offset + windowSamples);
+    let sumSquares = 0;
+    for (let index = offset; index < end; index++) {
+      const value = pcm[index] ?? 0;
+      sumSquares += value * value;
+    }
+    const count = end - offset;
+    const rms = count > 0 ? Math.sqrt(sumSquares / count) : 0;
+    const db = rms > 0 ? 20 * Math.log10(rms / 32768) : -90;
+    const midpointMs = startMs + Math.round(((offset + count / 2) * 1000) / sampleRate);
+    samples.push({
+      t_ms: midpointMs,
+      db_fs: Math.max(-90, Math.min(0, db)),
+    });
+  }
+  return samples;
+}
+
+class ArchiveRecorderService extends EventEmitter {
   private readonly recordingsDir = config.archive.recordingsDir;
   private readonly indexPath = path.join(this.recordingsDir, INDEX_FILE);
   private readonly chunkMs = config.archive.chunkMs;
   private readonly chunks: StoredChunk[] = [];
+  private readonly recentLiveSamples: ArchiveLiveSample[] = [];
+  private readonly maxRecentLiveSamples = 600; // ≈ 2 min of 200 ms windows
   private initialized = false;
   private enabled = config.archive.autoStart;
   private capturing = false;
   private loopPromise: Promise<void> | null = null;
   private lastError: string | null = null;
+
+  getRecentLiveSamples(sinceMs?: number) {
+    if (sinceMs === undefined) return this.recentLiveSamples.slice();
+    return this.recentLiveSamples.filter((sample) => sample.t_ms > sinceMs);
+  }
 
   async init() {
     if (this.initialized) return;
@@ -184,6 +230,16 @@ class ArchiveRecorderService {
         relative_path: chunk.relative_path,
         peak_dbfs: chunk.peak_dbfs,
       })}\n`);
+
+      const liveSamples = computeLiveSamples(wav.pcm, wav.sampleRate, startedAt);
+      if (liveSamples.length > 0) {
+        for (const sample of liveSamples) this.recentLiveSamples.push(sample);
+        if (this.recentLiveSamples.length > this.maxRecentLiveSamples) {
+          this.recentLiveSamples.splice(0, this.recentLiveSamples.length - this.maxRecentLiveSamples);
+        }
+        this.emit('live-samples', liveSamples);
+      }
+      this.emit('chunk', { id: chunk.id, start_ms: chunk.start_ms, end_ms: chunk.end_ms });
     } finally {
       clearTimeout(timeout);
     }

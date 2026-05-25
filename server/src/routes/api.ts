@@ -47,25 +47,44 @@ function requireEsp32Config(res: Response): boolean {
 
 // ─── GET /api/proxy/info — proxy board info from ESP32 ───────────────────────
 
+let lastInfoCache: { value: unknown; at: number } | null = null;
+
 router.get('/proxy/info', async (_req: Request, res: Response) => {
   if (!requireEsp32Config(res)) return;
   try {
     const info = await fetchBoardInfo(runtimeConfig.esp32Ip, runtimeConfig.esp32Port);
+    lastInfoCache = { value: info, at: Date.now() };
     res.json(info);
   } catch (err) {
-    res.status(502).json({ error: `Cannot reach ESP32: ${(err as Error).message}` });
+    if (lastInfoCache && Date.now() - lastInfoCache.at < 120000) {
+      res.json({ ...(lastInfoCache.value as object), stale: true });
+      return;
+    }
+    res.status(503).json({ error: `ESP32 busy: ${(err as Error).message}`, busy: true });
   }
 });
 
 // ─── GET /api/proxy/audio/level — proxy live audio level from ESP32 ──────────
 
+// Cache the last successful level read so the proxy can hand it back when
+// the ESP32 is locked out by an in-flight archive recording instead of
+// returning 502 every 200 ms (which spams the browser console).
+let lastLevelCache: { value: unknown; at: number } | null = null;
+
 router.get('/proxy/audio/level', async (_req: Request, res: Response) => {
   if (!requireEsp32Config(res)) return;
   try {
     const level = await fetchAudioLevel(runtimeConfig.esp32Ip, runtimeConfig.esp32Port);
+    lastLevelCache = { value: level, at: Date.now() };
     res.json(level);
   } catch (err) {
-    res.status(502).json({ error: `Cannot reach ESP32: ${(err as Error).message}` });
+    // Within 5 s of a successful read, return the cached value with a flag so
+    // the frontend can ignore it for chart updates without logging an error.
+    if (lastLevelCache && Date.now() - lastLevelCache.at < 5000) {
+      res.json({ ...(lastLevelCache.value as object), stale: true });
+      return;
+    }
+    res.status(503).json({ error: `ESP32 busy: ${(err as Error).message}`, busy: true });
   }
 });
 
@@ -175,6 +194,54 @@ router.get('/archive/audio/:id', (req: Request, res: Response) => {
       'Content-Type': 'audio/wav',
       'Cache-Control': 'no-cache',
     },
+  });
+});
+
+// Recent dBFS samples derived from saved archive chunks. Lets the browser
+// drive its live waveform from the archive when the ESP32 is busy serving
+// the next recording. `since_ms` returns only samples newer than that
+// timestamp so the client can poll for deltas.
+router.get('/archive/live-samples', (req: Request, res: Response) => {
+  const sinceMs = req.query['since_ms'] !== undefined
+    ? parseInt(String(req.query['since_ms']), 10) || undefined
+    : undefined;
+  const samples = archiveRecorder.getRecentLiveSamples(sinceMs);
+  res.json({
+    chunk_ms: archiveRecorder.getStatus().chunk_ms,
+    samples,
+  });
+});
+
+// Server-Sent Events stream of live dBFS samples computed from each newly
+// saved archive chunk. The first message includes any recently buffered
+// samples so a fresh client can populate its chart immediately.
+router.get('/archive/stream', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  send('hello', { chunk_ms: archiveRecorder.getStatus().chunk_ms });
+  const recent = archiveRecorder.getRecentLiveSamples();
+  if (recent.length > 0) send('samples', recent);
+
+  const onSamples = (samples: unknown) => send('samples', samples);
+  const onChunk = (chunk: unknown) => send('chunk', chunk);
+  archiveRecorder.on('live-samples', onSamples);
+  archiveRecorder.on('chunk', onChunk);
+
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 15000);
+  _req.on('close', () => {
+    clearInterval(keepAlive);
+    archiveRecorder.off('live-samples', onSamples);
+    archiveRecorder.off('chunk', onChunk);
+    res.end();
   });
 });
 

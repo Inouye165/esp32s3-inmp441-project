@@ -234,7 +234,7 @@
           </div>
 
           <audio id="archive-audio" class="w-100 mb-3" controls preload="metadata"></audio>
-          <div class="text-secondary small mb-2">Audio is recorded continuously on the server in fixed WAV chunks. Playback of stored chunks does not interrupt recording. “Play Live” follows the newest saved chunk, so it runs with one-chunk delay instead of true sub-second streaming.</div>
+          <div class="text-secondary small mb-2">Audio is recorded continuously on the server in short WAV chunks. The live waveform above is driven from these chunks (about 2 s behind real time) so it keeps moving even while the ESP32 is busy capturing the next clip. Playback of stored chunks does not interrupt recording.</div>
           <div id="archive-chunk-list" class="archive-chunk-list"></div>
         </div>
       </div>

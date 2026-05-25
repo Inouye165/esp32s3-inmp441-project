@@ -47,6 +47,16 @@ let currentAudio  = null;  // currently playing Audio element
 let recordAbort   = null;  // AbortController for in-progress recording fetch
 // Recording duration is user-selectable via #rec-duration-select.
 
+// Live-waveform SSE state. When the ESP32 is busy serving the next archive
+// chunk the direct /api/proxy/audio/level endpoint stops responding, so we
+// also subscribe to a server-side feed derived from the saved archive chunks
+// and drip those samples into the chart at the chart's native cadence so it
+// keeps moving smoothly even while the board is locked.
+let liveSampleSource = null;     // EventSource
+let liveSampleBuffer = [];       // pending samples to drip into the chart
+let liveSampleTimer  = null;     // setInterval handle
+let lastDirectLevelAt = 0;       // when /proxy/audio/level last succeeded
+
 // ─── DOM refs (resolved once on DOMContentLoaded) ─────────────────────────────
 
 let elStatus, elCurrentDb, elMeter, elChartOverlay, elUptime;
@@ -92,6 +102,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadSavedConfig();
   refreshArchiveStatus();
   archiveRefreshTimer = setInterval(refreshArchiveStatus, 15000);
+  connectLiveSampleStream();
 
   document.getElementById('connect-btn').addEventListener('click', onConnectClick);
   document.getElementById('refresh-info-btn').addEventListener('click', () => fetchBoardInfo());
@@ -223,27 +234,20 @@ async function fetchBoardInfo() {
   try {
     const res = await fetch('/api/proxy/info');
     if (!res.ok) {
+      // 503 = ESP32 busy; just stay quiet (board info is non-essential).
+      if (res.status === 503) return;
       const data = await res.json().catch(() => ({}));
-      const currentIp = document.getElementById('esp32-ip-input').value.trim();
-      if (res.status === 502) {
-        setStatus('connecting', `${currentIp || 'ESP32'} busy recording archive chunk`);
-      } else {
-        setStatus('error', data.error || `HTTP ${res.status}`);
-      }
+      setStatus('error', data.error || `HTTP ${res.status}`);
       return;
     }
     const info = await res.json();
     renderBoardInfo(info);
     boardFetchedAt = Date.now();
     boardUptime    = info.uptime_ms;
-    setStatus('connected', info.ip);
+    if (!info.stale) setStatus('connected', info.ip);
   } catch (err) {
-    const currentIp = document.getElementById('esp32-ip-input').value.trim();
-    if ((err.message || '').includes('aborted')) {
-      setStatus('connecting', `${currentIp || 'ESP32'} busy recording archive chunk`);
-    } else {
-      setStatus('error', err.message);
-    }
+    if ((err.message || '').includes('aborted')) return;
+    setStatus('error', err.message);
   }
 }
 
@@ -298,12 +302,72 @@ async function pollAudioLevel() {
     const res = await fetch('/api/proxy/audio/level');
     if (!res.ok) return;
     const data = await res.json();
+    // Server returns `stale: true` when the ESP32 is locked out by an
+    // archive recording. Skip the chart update — the SSE feed handles it.
+    if (data.stale) return;
+    lastDirectLevelAt = Date.now();
     updateLevelDisplay(data.db_fs);
     updateChart(data.db_fs);
     updateUptime();
   } catch {
     // silent — keep trying; connection errors are surfaced on the info fetch
   }
+}
+
+// ─── Live-sample SSE fallback ─────────────────────────────────────────────────
+// The server emits dBFS samples (computed from each saved archive chunk) via
+// /api/archive/stream. We buffer incoming bursts and drip them into the chart
+// at POLL_INTERVAL_MS pacing so the waveform stays smooth even while the
+// ESP32 /audio/level endpoint is locked out by an in-flight record request.
+
+function connectLiveSampleStream() {
+  if (liveSampleSource) return;
+  try {
+    liveSampleSource = new EventSource('/api/archive/stream');
+  } catch {
+    return;
+  }
+  liveSampleSource.addEventListener('samples', (evt) => {
+    try {
+      const parsed = JSON.parse(evt.data);
+      if (Array.isArray(parsed)) {
+        for (const sample of parsed) {
+          if (sample && typeof sample.db_fs === 'number') {
+            liveSampleBuffer.push(sample.db_fs);
+          }
+        }
+        if (liveSampleBuffer.length > 600) {
+          liveSampleBuffer.splice(0, liveSampleBuffer.length - 600);
+        }
+        ensureLiveSampleTimer();
+      }
+    } catch { /* ignore malformed message */ }
+  });
+  liveSampleSource.onerror = () => {
+    // EventSource auto-reconnects; nothing to do.
+  };
+}
+
+function ensureLiveSampleTimer() {
+  if (liveSampleTimer) return;
+  liveSampleTimer = setInterval(() => {
+    if (liveSampleBuffer.length === 0) {
+      clearInterval(liveSampleTimer);
+      liveSampleTimer = null;
+      return;
+    }
+    // Skip if the direct ESP32 poll updated the chart recently — direct data
+    // is always preferred when available.
+    if (Date.now() - lastDirectLevelAt < POLL_INTERVAL_MS * 2) {
+      liveSampleBuffer.shift();
+      return;
+    }
+    const db = liveSampleBuffer.shift();
+    if (Number.isFinite(db)) {
+      updateLevelDisplay(db);
+      updateChart(db);
+    }
+  }, POLL_INTERVAL_MS);
 }
 
 // ─── Level display ────────────────────────────────────────────────────────────
@@ -620,12 +684,42 @@ function findArchiveChunkAt(timeMs) {
 
 function playArchiveChunk(chunk, offsetSeconds) {
   archiveLiveChunkId = chunk.id;
-  elArchiveAudio.src = `/api/archive/audio/${encodeURIComponent(chunk.id)}`;
-  elArchiveAudio.load();
-  elArchiveAudio.onloadedmetadata = () => {
-    elArchiveAudio.currentTime = clamp(offsetSeconds, 0, Math.max(0, (elArchiveAudio.duration || 0) - 0.05));
-    elArchiveAudio.play().catch(() => {});
+  const audio = elArchiveAudio;
+  const url = `/api/archive/audio/${encodeURIComponent(chunk.id)}`;
+  // Only reset src when actually switching chunks — re-setting the same src
+  // forces a reload that aborts the current play() and is the main reason
+  // "replay" sometimes did nothing.
+  if (audio.src !== new URL(url, window.location.href).href) {
+    audio.onloadedmetadata = null;
+    audio.onerror = null;
+    audio.src = url;
+  }
+  // Apply seek lazily once metadata is known. If metadata is already loaded
+  // (HAVE_METADATA=1+), seek immediately.
+  const applyOffset = () => {
+    const dur = audio.duration;
+    if (Number.isFinite(dur) && dur > 0) {
+      audio.currentTime = clamp(offsetSeconds, 0, Math.max(0, dur - 0.05));
+    }
   };
+  if (audio.readyState >= 1) applyOffset();
+  else audio.onloadedmetadata = applyOffset;
+
+  audio.onerror = () => {
+    const code = audio.error?.code ?? '?';
+    const msg = audio.error?.message ?? '';
+    elArchiveSelectedTime.textContent = `Playback error (MediaError ${code}${msg ? ': ' + msg : ''})`;
+  };
+
+  // Call play() synchronously so the click's user-gesture token is honored.
+  const playPromise = audio.play();
+  if (playPromise && typeof playPromise.catch === 'function') {
+    playPromise.catch((err) => {
+      // AbortError is normal when the user clicks quickly between chunks.
+      if (err.name === 'AbortError') return;
+      elArchiveSelectedTime.textContent = `Playback blocked: ${err.message || err.name}`;
+    });
+  }
 }
 
 function playArchiveSelection() {

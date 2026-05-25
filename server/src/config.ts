@@ -5,7 +5,7 @@ import path from 'path';
 dotenv.config({ path: '.env.local' });
 dotenv.config();
 
-const archiveChunkMs = parseInt(process.env.ARCHIVE_CHUNK_MS ?? '10000', 10);
+const archiveChunkMs = parseInt(process.env.ARCHIVE_CHUNK_MS ?? '2000', 10);
 
 export const config = {
   port: parseInt(process.env.PORT ?? '3000', 10),
@@ -16,7 +16,9 @@ export const config = {
   requestTimeoutMs: 5000,
   archive: {
     recordingsDir: process.env.RECORDINGS_DIR ?? path.resolve(process.cwd(), 'recordings'),
-    chunkMs: Number.isFinite(archiveChunkMs) ? Math.min(30000, Math.max(5000, archiveChunkMs)) : 10000,
+    // Small chunks → fresher live-waveform stream + lower per-request ESP32
+    // lockout. Floor at 1 s so we can still play live audio meaningfully.
+    chunkMs: Number.isFinite(archiveChunkMs) ? Math.min(30000, Math.max(1000, archiveChunkMs)) : 2000,
     autoStart: process.env.ARCHIVE_AUTO_START !== 'false',
   },
 } as const;
