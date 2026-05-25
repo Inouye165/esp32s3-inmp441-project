@@ -8,23 +8,27 @@
 
 // =============================================================================
 // INMP441 I2S Pin Configuration
-//   INMP441 Pin | ESP32-S3 GPIO
+//   INMP441 Pin | ESP32 GPIO
 //   ------------|---------------
 //   SCK (BCLK)  | GPIO 14
 //   WS  (LRCLK) | GPIO 15
-//   SD  (DOUT)  | GPIO 32
+//   SD  (DOUT)  | GPIO 33
 //   L/R         | GND  (Left channel)
 //   VDD         | 3.3V
 //   GND         | GND
 //
-// NOTE: GPIO32 is used for SPI flash/PSRAM on ESP32-S3 boards that have
-// Octal flash or PSRAM (N8R8 variants). If you see I2S read errors, your
-// board may have GPIO32 reserved. In that case, move SD to an available GPIO
-// (e.g. GPIO38, GPIO39, GPIO40) and update I2S_SD_PIN below.
+// NOTE: GPIO 32 was previously used for SD, but on classic ESP32 DevKit
+// boards GPIO 32 doubles as 32K_XP (the 32 kHz oscillator input). When the
+// 32 kHz crystal is populated (common on DevKit V1 boards) GPIO 32 cannot
+// be driven as a general-purpose digital input \u2014 you get clocked bits
+// but no real audio (a constant ~\u221225 dBFS noise floor that doesn't
+// respond to sound). GPIO 33 is the natural neighbour and has no such
+// conflict. If GPIO 33 is also taken on your board, GPIO 25/26/27 also
+// work. AVOID 34\u201339 (input-only, no internal pull-up).
 // =============================================================================
-#define I2S_SCK_PIN   14   // Serial Clock (Bit Clock)
-#define I2S_WS_PIN    15   // Word Select (Left/Right Clock)
-#define I2S_SD_PIN    32   // Serial Data (microphone output)
+#define I2S_SCK_PIN    4   // Serial Clock (Bit Clock)   \u2014 orange
+#define I2S_WS_PIN     5   // Word Select (Left/Right)   \u2014 yellow
+#define I2S_SD_PIN     6   // Serial Data (mic output)   \u2014 brown
 
 // =============================================================================
 // I2S Driver Settings
@@ -46,6 +50,6 @@
 // =============================================================================
 // Board Identity
 // =============================================================================
-#define FIRMWARE_VERSION  "1.0.0"
-#define BOARD_NAME        "ESP32-DevKit"
+#define FIRMWARE_VERSION  "1.1.0"
+#define BOARD_NAME        "ESP32-S3-WROOM-1 (N16R8)"
 #define MIC_TYPE          "INMP441"

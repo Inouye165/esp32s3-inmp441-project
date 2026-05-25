@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { runtimeConfig } from '../config';
+import { config, runtimeConfig } from '../config';
 import { fetchAudioLevel, fetchBoardInfo } from '../services/esp32Service';
 
 const router = Router();
@@ -101,12 +101,12 @@ router.get('/proxy/audio/record', async (req: Request, res: Response) => {
     ? `http://${runtimeConfig.esp32Ip}`
     : `http://${runtimeConfig.esp32Ip}:${runtimeConfig.esp32Port}`;
 
-  const durationMs = Math.min(5000, Math.max(500,
+  const durationMs = Math.min(30000, Math.max(500,
     parseInt(String(req.query['duration_ms'] ?? '3000'), 10) || 3000));
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), durationMs + 12000);
+    const timer = setTimeout(() => controller.abort(), durationMs + 15000);
     req.on('close', () => { clearTimeout(timer); controller.abort(); });
 
     const esp32Res = await fetch(`${base}/api/audio/record?duration_ms=${durationMs}`, {

@@ -1,4 +1,7 @@
 import dotenv from 'dotenv';
+
+// Load local-only overrides first, then fill any missing values from .env.
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 export const config = {

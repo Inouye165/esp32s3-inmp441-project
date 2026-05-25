@@ -15,6 +15,8 @@ const POLL_INTERVAL_MS      = 200;   // audio level poll
 const INFO_REFRESH_MS       = 30000; // board info refresh
 const CHART_WINDOW_POINTS   = 150;   // 30 s at 200 ms/point
 const MAX_RECORD_POINTS     = 1500;  // 5 min cap
+const RECORD_MAX_MS         = 30000; // matches firmware cap
+const RECORD_DEFAULT_MS     = 3000;  // initial selector value
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -35,12 +37,12 @@ let audioBlob     = null;  // Blob containing recorded WAV
 let audioUrl      = null;  // object URL for the WAV blob
 let currentAudio  = null;  // currently playing Audio element
 let recordAbort   = null;  // AbortController for in-progress recording fetch
-const RECORD_DURATION_MS = 3000; // 3-second recording at native I2S rate
+// Recording duration is user-selectable via #rec-duration-select.
 
 // ─── DOM refs (resolved once on DOMContentLoaded) ─────────────────────────────
 
 let elStatus, elCurrentDb, elMeter, elChartOverlay, elUptime;
-let elRecordBtn, elStopBtn, elReplayBtn, elDownloadBtn, elRecDuration, elRateSelect;
+let elRecordBtn, elStopBtn, elReplayBtn, elDownloadBtn, elRecDuration, elRateSelect, elDurationSelect;
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
 
@@ -56,6 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
   elDownloadBtn  = document.getElementById('download-btn');
   elRecDuration  = document.getElementById('rec-duration');
   elRateSelect   = document.getElementById('sample-rate-select');
+  elDurationSelect = document.getElementById('rec-duration-select');
 
   initChart();
   loadSavedConfig();
@@ -82,15 +85,11 @@ function storageSet(key, val) {
 function loadSavedConfig() {
   const ip   = storageGet('esp32ip')   || '';
   const port = storageGet('esp32port') || '80';
-  if (ip) {
-    document.getElementById('esp32-ip-input').value   = ip;
-    document.getElementById('esp32-port-input').value = port;
-    // Auto-reconnect on page load if we have a saved IP
-    autoConnect(ip, parseInt(port, 10) || 80);
-  } else {
-    // No saved IP — fetch current server config and auto-connect if set
-    autoConnectFromServer();
-  }
+  document.getElementById('esp32-ip-input').value   = ip;
+  document.getElementById('esp32-port-input').value = port;
+  // Prefer the server's current runtime config over browser localStorage.
+  // localStorage is per-browser and can go stale after swapping hardware.
+  autoConnectFromServer(ip, parseInt(port, 10) || 80);
 }
 
 async function autoConnect(ip, port) {
@@ -107,18 +106,22 @@ async function autoConnect(ip, port) {
 }
 
 // Fallback: read server config (from .env) and auto-connect if an IP is set
-async function autoConnectFromServer() {
+async function autoConnectFromServer(fallbackIp = '', fallbackPort = 80) {
   try {
     const res = await fetch('/api/config');
     if (!res.ok) return;
     const cfg = await res.json();
-    if (cfg.ip) {
-      document.getElementById('esp32-ip-input').value   = cfg.ip;
-      document.getElementById('esp32-port-input').value = String(cfg.port || 80);
-      setStatus('connecting', cfg.ip);
-      await fetchBoardInfo();
-      startPolling();
-    }
+    const chosenIp = cfg.ip || fallbackIp;
+    const chosenPort = Number(cfg.port || fallbackPort || 80);
+    if (!chosenIp) return;
+
+    document.getElementById('esp32-ip-input').value   = chosenIp;
+    document.getElementById('esp32-port-input').value = String(chosenPort);
+    storageSet('esp32ip', chosenIp);
+    storageSet('esp32port', String(chosenPort));
+    setStatus('connecting', chosenIp);
+    await fetchBoardInfo();
+    startPolling();
   } catch { /* server not ready yet */ }
 }
 
@@ -419,15 +422,21 @@ function startRecording() {
   recordBuffer = [];
   recordStart  = Date.now();
 
+  const durationMs = Math.min(RECORD_MAX_MS, Math.max(500,
+    parseInt(elDurationSelect?.value ?? String(RECORD_DEFAULT_MS), 10) || RECORD_DEFAULT_MS));
+
   elRecordBtn.disabled = true;
   elStopBtn.disabled   = false;
   elReplayBtn.disabled = true;
   elDownloadBtn.style.display = 'none';
 
-  stopPolling(); // pause live chart while ESP32 is recording
+  // NOTE: we intentionally do NOT call stopPolling() here. The ESP32 firmware
+  // pauses its live micTask while it owns I2S for the WAV stream, so the
+  // /api/audio/level endpoint just returns the cached last value — the chart
+  // will flatline during the recording, which is more honest than blanking it.
 
   // Countdown display
-  let remaining = Math.ceil(RECORD_DURATION_MS / 1000);
+  let remaining = Math.ceil(durationMs / 1000);
   elRecDuration.textContent = `● ${remaining}s…`;
   recTimerTick = setInterval(() => {
     remaining--;
@@ -436,7 +445,7 @@ function startRecording() {
 
   // Fetch WAV from ESP32 via server proxy
   recordAbort = new AbortController();
-  fetch(`/api/proxy/audio/record?duration_ms=${RECORD_DURATION_MS}`, {
+  fetch(`/api/proxy/audio/record?duration_ms=${durationMs}`, {
     signal: recordAbort.signal,
   })
     .then(res => {
@@ -467,7 +476,7 @@ function startRecording() {
       isRecording  = false;
       elRecordBtn.disabled = false;
       elStopBtn.disabled   = true;
-      startPolling(); // resume live chart
+      // Polling was never stopped; nothing to resume.
     });
 }
 

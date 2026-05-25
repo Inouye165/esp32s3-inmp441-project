@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <esp_chip_info.h>
 #include <esp_flash.h>
+#include <esp_heap_caps.h>
 #include <driver/i2s.h>
 
 // ─── CORS helper ─────────────────────────────────────────────────────────────
@@ -144,8 +145,9 @@ static void handleOptions(WebServer& server) {
 
 // ─── WAV recording handler ────────────────────────────────────────────────────
 //  GET /api/audio/record?duration_ms=3000
-//  Records duration_ms of audio at 16 kHz / 16-bit mono, returns WAV file.
-//  Max 5 seconds. Pauses the micTask while owning I2S.
+//  Records duration_ms of audio at the current I2S sample rate as 16-bit mono
+//  WAV. On ESP32-S3 boards with PSRAM, the take is buffered and normalized
+//  before being returned so quiet recordings replay at a more usable level.
 
 static void buildWavHeader(uint8_t* h, uint32_t sampleRate, uint32_t dataBytes) {
     const uint16_t nCh   = 1;
@@ -164,13 +166,50 @@ static void buildWavHeader(uint8_t* h, uint32_t sampleRate, uint32_t dataBytes) 
     memcpy(h + 40, &dataBytes, 4);
 }
 
+static void sendWavResponse(WebServer& server,
+                            const int16_t* pcm,
+                            uint32_t sampleRate,
+                            uint32_t sampleCount) {
+    const uint32_t dataBytes = sampleCount * sizeof(int16_t);
+    uint8_t header[44];
+    buildWavHeader(header, sampleRate, dataBytes);
+
+    server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
+    server.sendHeader("Cache-Control", "no-cache");
+    server.setContentLength(44 + dataBytes);
+    server.send(200, "audio/wav", "");
+    server.sendContent((const char*)header, 44);
+
+    uint32_t sent = 0;
+    while (sent < sampleCount) {
+        uint32_t chunk = sampleCount - sent;
+        if (chunk > AUDIO_BLOCK_SIZE) chunk = AUDIO_BLOCK_SIZE;
+        server.sendContent((const char*)(pcm + sent), chunk * sizeof(int16_t));
+        sent += chunk;
+    }
+}
+
 static void handleAudioRecord(WebServer& server) {
     addCorsHeaders(server);
 
     uint32_t durationMs = 3000;
     if (server.hasArg("duration_ms")) {
         int v = server.arg("duration_ms").toInt();
-        durationMs = (uint32_t)max(500, min(5000, v));
+        // Cap raised to 30 s. WAV is streamed (no large alloc) so the only
+        // real limit is the HTTP socket staying open and the WiFi TX queue.
+        durationMs = (uint32_t)max(500, min(30000, v));
+    }
+
+    // Tunable gain — caller-provided (default 32 = ~30 dB, good for room voice).
+    // The raw INMP441 sample is in bits 31:8 (24-bit signed). Converting to
+    // 16-bit at unity gain would be `>> 16`. `gain` then multiplies that result.
+    //   gain=1   → no extra boost (very quiet)
+    //   gain=16  → +24 dB
+    //   gain=32  → +30 dB (default)
+    //   gain=64  → +36 dB (likely clipping for normal speech)
+    int gain = 32;
+    if (server.hasArg("gain")) {
+        gain = (int)max(1L, min(256L, (long)server.arg("gain").toInt()));
     }
 
     // Use current sample rate — avoids switching the I2S clock (causes static at low rates)
@@ -178,53 +217,121 @@ static void handleAudioRecord(WebServer& server) {
     const uint32_t nSamp  = (RATE * durationMs) / 1000;
     const uint32_t nBytes = nSamp * sizeof(int16_t);
 
-    // Build WAV header — exact size known upfront, no large malloc needed
-    uint8_t header[44];
-    buildWavHeader(header, RATE, nBytes);
+    int16_t* captured = (int16_t*)heap_caps_malloc(nBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!captured) {
+        captured = (int16_t*)heap_caps_malloc(nBytes, MALLOC_CAP_8BIT);
+    }
+
+    if (!captured) {
+        uint8_t header[44];
+        buildWavHeader(header, RATE, nBytes);
+        server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
+        server.sendHeader("Cache-Control", "no-cache");
+        server.setContentLength(44 + nBytes);
+        server.send(200, "audio/wav", "");
+        server.sendContent((const char*)header, 44);
+    }
 
     // Take exclusive ownership of I2S (no rate change needed)
     micSetRecordingPause(true);
-    // micReadLevel() holds i2s_read(portMAX_DELAY) — give it time to exit
+    // micReadLevel() holds i2s_read(portMAX_DELAY) for up to AUDIO_BLOCK_SIZE
+    // samples (~12 ms at 44.1 kHz) — wait long enough for it to bail out.
     vTaskDelay(pdMS_TO_TICKS(50));
 
-    // Drain all stale DMA buffers by reading them out (do NOT call
-    // i2s_zero_dma_buffer — that is unreliable on RX-only ports)
-    { int32_t drain[I2S_DMA_BUF_LEN]; size_t b = 0;
-      for (int d = 0; d < I2S_DMA_BUF_COUNT + 1; d++)
-          i2s_read(I2S_PORT, drain, sizeof(drain), &b, pdMS_TO_TICKS(100)); }
+    // Drain stale DMA buffers. Use the SAME chunk size as micReadLevel
+    // (AUDIO_BLOCK_SIZE samples = full DMA-buffer-aligned reads) — the legacy
+    // I2S driver returns partial / zeroed data when asked for sub-buffer sizes.
+    {
+        static int32_t drain[AUDIO_BLOCK_SIZE];
+        size_t b = 0;
+        for (int d = 0; d < I2S_DMA_BUF_COUNT + 1; d++) {
+            i2s_read(I2S_PORT, drain, sizeof(drain), &b, pdMS_TO_TICKS(200));
+        }
+    }
 
-    // Stream response: send WAV header then PCM in small stack-allocated chunks
-    server.sendHeader("Content-Disposition", "inline; filename=\"recording.wav\"");
-    server.sendHeader("Cache-Control", "no-cache");
-    server.setContentLength(44 + nBytes);
-    server.send(200, "audio/wav", "");
-    server.sendContent((const char*)header, 44);
+    // Fresh DC blocker for this recording so we don't inherit state from the
+    // live-level path (which may have built up after a long uptime).
+    DcBlockerState dc;
+    dcBlockerReset(dc);
 
-    // 64 frames × 4 bytes = 256-byte raw buffer; 64 × 2 bytes = 128-byte PCM output
-    static const uint32_t CHUNK = 64;
-    int32_t raw[CHUNK];
-    int16_t pcm[CHUNK];
+    // Read AUDIO_BLOCK_SIZE samples per call — proven good with the legacy
+    // I2S driver (this is exactly what micReadLevel does).
+    static int32_t raw[AUDIO_BLOCK_SIZE];
+    static int16_t pcm[AUDIO_BLOCK_SIZE];
     uint32_t recorded = 0;
+    int32_t peakAbs   = 0;
 
     while (recorded < nSamp) {
         size_t   bytesRead = 0;
-        uint32_t want = min(CHUNK, nSamp - recorded);
-        i2s_read(I2S_PORT, raw, want * sizeof(int32_t), &bytesRead, pdMS_TO_TICKS(1000));
+        uint32_t want      = nSamp - recorded;
+        if (want > AUDIO_BLOCK_SIZE) want = AUDIO_BLOCK_SIZE;
+
+        // For the final partial block, still ask for a full block — the driver
+        // delivers DMA-buffer-aligned data. We'll just send the bytes we need.
+        i2s_read(I2S_PORT, raw, AUDIO_BLOCK_SIZE * sizeof(int32_t),
+                 &bytesRead, portMAX_DELAY);
         uint32_t n = bytesRead / sizeof(int32_t);
+        if (n > want) n = want;
+
         for (uint32_t i = 0; i < n; i++) {
             // INMP441: 24-bit audio in bits 31:8 of 32-bit DMA word.
-            // Direct >> 16 gives the top 8 bits — far too quiet for room-level audio.
-            // Apply 16× gain (24 dB): use >> 12 = (24-bit value >> 4), then clamp.
-            int32_t s = raw[i] >> 12;
+            const int32_t raw24 = raw[i] >> 8;                 // 24-bit signed
+            const float   hp    = dcBlockerProcess(dc, (float)raw24);
+            // Scale 24-bit → 16-bit (/256) and apply tunable gain.
+            // IMPORTANT: do the multiply in float, then cast — otherwise small
+            // samples (|hp| < 256) get truncated to 0 before the gain is applied
+            // and the recording sounds like static.
+            int32_t s = (int32_t)((hp * (float)gain) / 256.0f);
             if      (s >  32767) s =  32767;
             else if (s < -32768) s = -32768;
             pcm[i] = (int16_t)s;
+            if (captured) {
+                captured[recorded + i] = pcm[i];
+                const int32_t absSample = (s < 0) ? -s : s;
+                if (absSample > peakAbs) peakAbs = absSample;
+            }
         }
-        server.sendContent((const char*)pcm, n * sizeof(int16_t));
+        if (!captured) {
+            // Fallback for boards without enough RAM: preserve the old
+            // streaming behaviour instead of failing the request outright.
+            server.sendContent((const char*)pcm, n * sizeof(int16_t));
+        }
         recorded += n;
     }
 
     micSetRecordingPause(false);
+
+    if (!captured) {
+        return;
+    }
+
+    // Normalize the finished take so replay better matches what was heard in
+    // the room. Keep a little headroom and cap extra makeup gain to avoid
+    // turning silence into hiss.
+    const float targetPeak = 29491.0f; // about -1 dBFS
+    float normalize = 1.0f;
+    if (peakAbs > 0 && peakAbs < targetPeak) {
+        normalize = targetPeak / (float)peakAbs;
+        if (normalize > 8.0f) normalize = 8.0f;
+    }
+
+    if (normalize > 1.01f) {
+        for (uint32_t i = 0; i < nSamp; i++) {
+            int32_t s = (int32_t)((float)captured[i] * normalize);
+            if      (s >  32767) s =  32767;
+            else if (s < -32768) s = -32768;
+            captured[i] = (int16_t)s;
+        }
+    }
+
+    Serial.printf("[Rec] %lu ms @ %lu Hz  peak=%ld  normalize=%.2fx\n",
+                  (unsigned long)durationMs,
+                  (unsigned long)RATE,
+                  (long)peakAbs,
+                  (double)normalize);
+
+    sendWavResponse(server, captured, RATE, nSamp);
+    heap_caps_free(captured);
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────

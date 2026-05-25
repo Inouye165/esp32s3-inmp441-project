@@ -12,6 +12,22 @@ static AudioLevel    s_latestLevel  = {0.0f, -90.0f, 0, 0};
 static uint32_t      s_sampleRate   = I2S_SAMPLE_RATE;
 static volatile bool s_pauseForRec  = false;  // set while handleAudioRecord owns I2S
 
+// ─── DC blocker (one-pole high-pass) ─────────────────────────────────────────
+// INMP441 has a noticeable DC offset that wastes dynamic range and adds
+// low-frequency rumble. y[n] = x[n] - x[n-1] + R*y[n-1] with R close to 1.
+// R = 0.9975 → roughly 18 Hz cutoff at 44.1 kHz (sub-bass, no voice loss).
+void dcBlockerReset(DcBlockerState& s) { s.x1 = 0.0f; s.y1 = 0.0f; }
+
+float dcBlockerProcess(DcBlockerState& s, float x) {
+    constexpr float R = 0.9975f;
+    const float y = x - s.x1 + R * s.y1;
+    s.x1 = x;
+    s.y1 = y;
+    return y;
+}
+
+static DcBlockerState s_liveDc = {0.0f, 0.0f};
+
 // ─── I2S driver installation ─────────────────────────────────────────────────
 
 bool micInit() {
@@ -19,7 +35,11 @@ bool micInit() {
         .mode                 = i2s_mode_t(I2S_MODE_MASTER | I2S_MODE_RX),
         .sample_rate          = I2S_SAMPLE_RATE,
         .bits_per_sample      = i2s_bits_per_sample_t(I2S_BITS),
-        .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,   // L/R pin tied to GND
+        // INMP441 datasheet: L/R = GND → audio appears on the LEFT slot.
+        // arduino-esp32 v3.x / IDF 5.x fixed the old L/R-swap bug, so use ONLY_LEFT.
+        // (Using ONLY_RIGHT here reads the silent half of the I2S frame and produces
+        //  a very-low-level signal that sounds like static.)
+        .channel_format       = I2S_CHANNEL_FMT_ONLY_LEFT,
         .communication_format = i2s_comm_format_t(I2S_COMM_FORMAT_STAND_I2S),
         .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
         .dma_buf_count        = I2S_DMA_BUF_COUNT,
@@ -85,13 +105,16 @@ AudioLevel micReadLevel() {
 
     // The INMP441 puts the 24-bit sample in bits [31:8] of the 32-bit word.
     // Shift right by 8 so we get a proper 24-bit signed integer before squaring.
+    // Apply a DC blocker — the INMP441 has a noticeable DC offset that would
+    // otherwise dominate the RMS and pin dBFS unnaturally high.
     double sumSquares = 0.0;
     int32_t peak      = 0;
     for (int i = 0; i < count; ++i) {
-        const int32_t s = samples[i] >> 8;   // 24-bit signed
-        sumSquares += static_cast<double>(s) * s;
-        const int32_t absSample = (s < 0) ? -s : s;
-        if (absSample > peak) peak = absSample;
+        const int32_t raw24 = samples[i] >> 8;   // 24-bit signed
+        const float   s     = dcBlockerProcess(s_liveDc, (float)raw24);
+        sumSquares += (double)s * (double)s;
+        const float absSample = s < 0 ? -s : s;
+        if (absSample > peak) peak = (int32_t)absSample;
     }
 
     const float rms = static_cast<float>(sqrt(sumSquares / count));

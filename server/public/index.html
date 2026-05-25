@@ -109,17 +109,18 @@
           <table class="table table-sm table-dark table-borderless mb-0 info-table">
             <thead>
               <tr>
+                <th class="text-secondary small">Wire</th>
                 <th class="text-secondary small">INMP441 Pin</th>
-                <th class="text-secondary small">ESP32-S3</th>
+                <th class="text-secondary small">ESP32</th>
               </tr>
             </thead>
             <tbody>
-              <tr><td>VDD</td>   <td id="pin-vdd">3.3V</td></tr>
-              <tr><td>GND</td>   <td>GND</td></tr>
-              <tr><td>L/R</td>   <td id="pin-lr">GND</td></tr>
-              <tr><td>SCK</td>   <td id="pin-sck">GPIO 14</td></tr>
-              <tr><td>WS</td>    <td id="pin-ws">GPIO 15</td></tr>
-              <tr><td>SD</td>    <td id="pin-sd">GPIO 32</td></tr>
+              <tr><td><span class="wire-swatch wire-red"></span>Red</td>     <td>VDD</td>   <td id="pin-vdd">3.3V</td></tr>
+              <tr><td><span class="wire-swatch wire-black"></span>Black</td> <td>GND</td>   <td>GND</td></tr>
+              <tr><td><span class="wire-swatch wire-green"></span>Green</td> <td>L/R</td>   <td id="pin-lr">GND</td></tr>
+              <tr><td><span class="wire-swatch wire-orange"></span>Orange</td><td>SCK</td>  <td id="pin-sck">GPIO 4</td></tr>
+              <tr><td><span class="wire-swatch wire-yellow"></span>Yellow</td><td>WS</td>   <td id="pin-ws">GPIO 5</td></tr>
+              <tr><td><span class="wire-swatch wire-brown"></span>Brown</td> <td>SD</td>    <td id="pin-sd">GPIO 6</td></tr>
             </tbody>
           </table>
         </div>
@@ -167,7 +168,15 @@
             <span class="badge bg-success">Quiet &lt;−40</span>
             <span class="badge bg-warning text-dark">Moderate −40…−20</span>
             <span class="badge bg-danger">Loud &gt;−20</span>
-            <div class="ms-auto d-flex gap-2">
+            <div class="ms-auto d-flex gap-2 align-items-center">
+              <label class="text-secondary small mb-0">Duration</label>
+              <select id="rec-duration-select" class="form-select form-select-sm" style="width:auto">
+                <option value="3000" selected>3 s</option>
+                <option value="5000">5 s</option>
+                <option value="10000">10 s</option>
+                <option value="20000">20 s</option>
+                <option value="30000">30 s (max)</option>
+              </select>
               <button id="record-btn" class="btn btn-sm btn-outline-danger">&#9679; Record</button>
               <button id="stop-btn"   class="btn btn-sm btn-outline-secondary" disabled>&#9632; Stop</button>
               <button id="replay-btn"   class="btn btn-sm btn-outline-info"      disabled>&#9654; Replay</button>

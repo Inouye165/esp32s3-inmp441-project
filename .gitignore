@@ -8,7 +8,9 @@ firmware/include/secrets.h
 # ── Node / Server ────────────────────────────────────────────────────────────
 server/node_modules/
 server/dist/
-server/.env            # real env — use .env.example as template
+server/.env            # legacy env file (kept ignored for local compatibility)
+server/.env.local      # real local env — use .env.local.example as template
+server/recordings/
 
 # ── TypeScript build artefacts ───────────────────────────────────────────────
 *.js.map

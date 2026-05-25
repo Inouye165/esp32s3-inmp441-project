@@ -45,3 +45,10 @@ bool     micSetSampleRate(uint32_t rateHz);
 
 /** Return the currently configured sample rate (Hz). */
 uint32_t micGetSampleRate();
+
+// ─── DC blocker (one-pole high-pass) ─────────────────────────────────────────
+// Shared between the live level loop and the WAV recording handler so the
+// INMP441's DC offset is removed everywhere it matters.
+struct DcBlockerState { float x1; float y1; };
+void  dcBlockerReset(DcBlockerState& s);
+float dcBlockerProcess(DcBlockerState& s, float x);
