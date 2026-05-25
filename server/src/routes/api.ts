@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import fs from 'fs/promises';
 import { config, runtimeConfig } from '../config';
 import { archiveRecorder } from '../services/archiveRecorder';
+import { audioIngest } from '../services/audioIngest';
 import { fetchAudioLevel, fetchBoardInfo } from '../services/esp32Service';
 
 const router = Router();
@@ -157,6 +158,11 @@ router.get('/archive/status', (_req: Request, res: Response) => {
   res.json(archiveRecorder.getStatus());
 });
 
+// Phase 6: PCM ingest status (TCP audio stream from firmware).
+router.get('/stream/status', (_req: Request, res: Response) => {
+  res.json(audioIngest.getStatus());
+});
+
 router.post('/archive/start', (_req: Request, res: Response) => {
   archiveRecorder.start();
   res.json(archiveRecorder.getStatus());
@@ -215,6 +221,23 @@ router.get('/archive/audio-range', async (req: Request, res: Response) => {
     res.status(400).json({ error: `Range too large (max ${MAX_RANGE_MS / 60000} min)` });
     return;
   }
+
+  // Phase 6: prefer the streamed hour files when ingest has data for this
+  // range — they are gapless and don't need stitching. Fall back to the
+  // legacy 2 s chunks (still produced when firmware doesn't stream).
+  try {
+    if (audioIngest.isEnabled() && audioIngest.hasDataInRange(startMs, endMs)) {
+      const got = await audioIngest.readPcmRange(startMs, endMs);
+      if (got && got.pcm.length > 0) {
+        sendWavBuffer(res, got.sampleRate, 1, 16, got.pcm, startMs, endMs, download);
+        return;
+      }
+    }
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+    return;
+  }
+
   const chunks = archiveRecorder.getChunkFilesInRange(startMs, endMs);
   if (chunks.length === 0) {
     res.status(404).json({ error: 'No archived audio in that range' });
@@ -245,32 +268,7 @@ router.get('/archive/audio-range', async (req: Request, res: Response) => {
       return;
     }
     const pcm = Buffer.concat(pcmParts);
-    const byteRate   = sampleRate * numChannels * (bitsPerSample / 8);
-    const blockAlign = numChannels * (bitsPerSample / 8);
-    const header = Buffer.alloc(44);
-    header.write('RIFF', 0);
-    header.writeUInt32LE(36 + pcm.length, 4);
-    header.write('WAVE', 8);
-    header.write('fmt ', 12);
-    header.writeUInt32LE(16, 16);              // fmt chunk size
-    header.writeUInt16LE(1, 20);               // PCM
-    header.writeUInt16LE(numChannels, 22);
-    header.writeUInt32LE(sampleRate, 24);
-    header.writeUInt32LE(byteRate, 28);
-    header.writeUInt16LE(blockAlign, 32);
-    header.writeUInt16LE(bitsPerSample, 34);
-    header.write('data', 36);
-    header.writeUInt32LE(pcm.length, 40);
-
-    const total = header.length + pcm.length;
-    res.setHeader('Content-Type', 'audio/wav');
-    res.setHeader('Content-Length', String(total));
-    res.setHeader('Cache-Control', 'no-cache');
-    if (download) {
-      const fname = `esp32-${formatTimestampForFilename(startMs)}-to-${formatTimestampForFilename(endMs)}.wav`;
-      res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
-    }
-    res.end(Buffer.concat([header, pcm]));
+    sendWavBuffer(res, sampleRate, numChannels, bitsPerSample, pcm, startMs, endMs, download);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -281,6 +279,46 @@ function formatTimestampForFilename(ms: number): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-`
        + `${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+}
+
+// Helper: emit a single 44-byte WAV header + raw PCM buffer as the response
+// body. Used by the Phase 6 ingest branch of /archive/audio-range so we don't
+// duplicate header-building logic.
+function sendWavBuffer(
+  res: Response,
+  sampleRate: number,
+  numChannels: number,
+  bitsPerSample: number,
+  pcm: Buffer,
+  startMs: number,
+  endMs: number,
+  download: boolean,
+): void {
+  const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+  const blockAlign = numChannels * (bitsPerSample / 8);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(numChannels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(byteRate, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+  const total = header.length + pcm.length;
+  res.setHeader('Content-Type', 'audio/wav');
+  res.setHeader('Content-Length', String(total));
+  res.setHeader('Cache-Control', 'no-cache');
+  if (download) {
+    const fname = `esp32-${formatTimestampForFilename(startMs)}-to-${formatTimestampForFilename(endMs)}.wav`;
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+  }
+  res.end(Buffer.concat([header, pcm]));
 }
 
 // Historical dBFS timeline for a span, used by the dashboard to render the
@@ -298,8 +336,15 @@ router.get('/archive/db-series', async (req: Request, res: Response) => {
     return;
   }
   try {
+    if (audioIngest.isEnabled() && audioIngest.hasDataInRange(startMs, endMs)) {
+      const samples = await audioIngest.getDbSeriesInRange(startMs, endMs);
+      if (samples.length > 0) {
+        res.json({ start_ms: startMs, end_ms: endMs, samples, source: 'stream' });
+        return;
+      }
+    }
     const samples = await archiveRecorder.getDbSeriesInRange(startMs, endMs);
-    res.json({ start_ms: startMs, end_ms: endMs, samples });
+    res.json({ start_ms: startMs, end_ms: endMs, samples, source: 'chunks' });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -336,19 +381,25 @@ router.get('/archive/stream', (_req: Request, res: Response) => {
   };
 
   send('hello', { chunk_ms: archiveRecorder.getStatus().chunk_ms });
-  const recent = archiveRecorder.getRecentLiveSamples();
-  if (recent.length > 0) send('samples', recent);
+  // Seed with the freshest samples we have, preferring the live PCM stream
+  // if it's connected; otherwise fall back to the chunk-derived ring.
+  const seed = audioIngest.isEnabled() && audioIngest.getStatus().connected
+    ? audioIngest.getRecentDbSamples()
+    : archiveRecorder.getRecentLiveSamples();
+  if (seed.length > 0) send('samples', seed);
 
   const onSamples = (samples: unknown) => send('samples', samples);
   const onChunk = (chunk: unknown) => send('chunk', chunk);
   archiveRecorder.on('live-samples', onSamples);
   archiveRecorder.on('chunk', onChunk);
+  audioIngest.on('live-samples', onSamples);
 
   const keepAlive = setInterval(() => res.write(': ping\n\n'), 15000);
   _req.on('close', () => {
     clearInterval(keepAlive);
     archiveRecorder.off('live-samples', onSamples);
     archiveRecorder.off('chunk', onChunk);
+    audioIngest.off('live-samples', onSamples);
     res.end();
   });
 });

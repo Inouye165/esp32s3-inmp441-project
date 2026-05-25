@@ -1,6 +1,7 @@
 #include "http_api.h"
 #include "i2s_microphone.h"
 #include "config.h"
+#include "audio_stream.h"
 
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -191,6 +192,14 @@ static void sendWavResponse(WebServer& server,
 
 static void handleAudioRecord(WebServer& server) {
     addCorsHeaders(server);
+
+    // Phase 6: when the TCP streaming task is active it owns I2S, so the
+    // legacy chunk-poll endpoint must refuse rather than fight for the bus.
+    if (audioStreamIsActive()) {
+        server.send(409, "application/json",
+                    "{\"error\":\"streaming active; /api/audio/record disabled\"}");
+        return;
+    }
 
     uint32_t durationMs = 3000;
     if (server.hasArg("duration_ms")) {

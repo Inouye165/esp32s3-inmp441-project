@@ -33,6 +33,16 @@ AudioLevel micReadLevel();
  */
 void micSetRecordingPause(bool pause);
 
+/**
+ * Pause/resume the micTask while the Phase 6 streaming task owns I2S.
+ * The streaming task is expected to call micPublishLevel() so /api/audio/level
+ * keeps reporting fresh values while micTask is idle.
+ */
+void micSetStreamingPause(bool pause);
+
+/** Atomically publish a fresh AudioLevel from an external owner of I2S. */
+void micPublishLevel(const AudioLevel& level);
+
 /** Return a snapshot of the most recently computed AudioLevel. Thread-safe. */
 AudioLevel micGetLatestLevel();
 

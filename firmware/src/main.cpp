@@ -19,6 +19,7 @@
 #include "wifi_manager.h"
 #include "i2s_microphone.h"
 #include "http_api.h"
+#include "audio_stream.h"
 
 // ─── Globals ─────────────────────────────────────────────────────────────────
 
@@ -69,6 +70,9 @@ void setup() {
 
     // 4. Register routes and start HTTP server
     httpApiBegin(g_server);
+
+    // 5. Start Phase 6 TCP streaming task (no-op if STREAM_HOST is unset/empty)
+    audioStreamBegin();
 
     Serial.println("\n[OK] System ready.\n");
 }

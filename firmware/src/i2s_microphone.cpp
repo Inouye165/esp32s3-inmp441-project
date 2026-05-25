@@ -11,6 +11,7 @@ static portMUX_TYPE  s_mux          = portMUX_INITIALIZER_UNLOCKED;
 static AudioLevel    s_latestLevel  = {0.0f, -90.0f, 0, 0};
 static uint32_t      s_sampleRate   = I2S_SAMPLE_RATE;
 static volatile bool s_pauseForRec  = false;  // set while handleAudioRecord owns I2S
+static volatile bool s_pauseForStream = false; // set while audio_stream task owns I2S
 
 // ─── DC blocker (one-pole high-pass) ─────────────────────────────────────────
 // INMP441 has a noticeable DC offset that wastes dynamic range and adds
@@ -82,9 +83,19 @@ void micSetRecordingPause(bool pause) {
     s_pauseForRec = pause;
 }
 
+void micSetStreamingPause(bool pause) {
+    s_pauseForStream = pause;
+}
+
+void micPublishLevel(const AudioLevel& level) {
+    taskENTER_CRITICAL(&s_mux);
+    s_latestLevel = level;
+    taskEXIT_CRITICAL(&s_mux);
+}
+
 AudioLevel micReadLevel() {
-    // Yield while the HTTP handler owns the I2S peripheral for WAV recording
-    if (s_pauseForRec) {
+    // Yield while another owner (recording or streaming) has the I2S peripheral
+    if (s_pauseForRec || s_pauseForStream) {
         vTaskDelay(pdMS_TO_TICKS(10));
         return micGetLatestLevel();
     }
