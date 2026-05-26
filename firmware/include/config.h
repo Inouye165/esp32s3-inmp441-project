@@ -48,6 +48,19 @@
 #define HTTP_PORT 80
 
 // =============================================================================
+// Phase 6 — TCP raw-PCM streaming to the Node server's audioIngest service.
+// STREAM_HOST is defined in secrets.h (per-deployment IP). STREAM_PORT is
+// the TCP port audioIngest listens on (matches server config defaults).
+// If STREAM_HOST is undefined or empty, the streaming task stays idle and
+// the device behaves like Phase 5 (chunk-poll fallback).
+// =============================================================================
+#define STREAM_PORT             8001
+#define STREAM_SAMPLE_RATE      16000   // 16 kHz mono int16 keeps WiFi headroom
+#define STREAM_GAIN             32      // matches /api/audio/record default
+#define STREAM_RECONNECT_MIN_MS 500
+#define STREAM_RECONNECT_MAX_MS 8000
+
+// =============================================================================
 // Board Identity
 // =============================================================================
 #define FIRMWARE_VERSION  "1.1.0"
