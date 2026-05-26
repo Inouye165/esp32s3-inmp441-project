@@ -3,303 +3,98 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ESP32-S3 INMP441 Audio Monitor</title>
+  <title>ESP32-S3 INMP441 Streamer</title>
   <link rel="stylesheet" href="lib/bootstrap.min.css" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
 
-<!-- ── Navbar ──────────────────────────────────────────────────────────────── -->
 <nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-3">
   <span class="navbar-brand fw-semibold">
-    <span class="text-success">&#9679;</span>&nbsp;ESP32-S3 · INMP441 Audio Monitor
+    <span class="text-success">&#9679;</span>&nbsp;ESP32-S3 INMP441 Streamer
   </span>
-  <div id="connection-status">
-    <span class="badge bg-secondary">Not connected</span>
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-secondary small">Board:</span>
+    <span id="board-status" class="badge bg-secondary">unknown</span>
+    <span class="text-secondary small ms-3">Ingest:</span>
+    <span id="ingest-status" class="badge bg-secondary">unknown</span>
   </div>
 </nav>
 
 <div class="container-fluid py-3 px-4">
 
-  <!-- ── ESP32 IP Config bar ────────────────────────────────────────────────── -->
-  <div class="row g-2 mb-3">
-    <div class="col-12">
-      <div class="card border-secondary">
-        <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
-          <label class="text-secondary small mb-0">ESP32 IP Address</label>
-          <input id="esp32-ip-input" type="text" class="form-control form-control-sm w-auto"
-                 placeholder="e.g. 192.168.1.50" style="min-width:160px" />
-          <input id="esp32-port-input" type="number" class="form-control form-control-sm"
-                 placeholder="Port" value="80" style="width:80px" />
-          <button id="connect-btn" class="btn btn-sm btn-outline-success">Connect</button>
-          <button id="refresh-info-btn" class="btn btn-sm btn-outline-secondary ms-2">
-            &#8635; Refresh Info
-          </button>
-          <div class="ms-auto d-flex align-items-center gap-2">
-            <label class="text-secondary small mb-0">Sample Rate</label>
-            <select id="sample-rate-select" class="form-select form-select-sm" style="width:auto" disabled>
-              <option value="8000">8 kHz</option>
-              <option value="16000">16 kHz</option>
-              <option value="22050">22.05 kHz</option>
-              <option value="32000">32 kHz</option>
-              <option value="44100" selected>44.1 kHz</option>
-              <option value="48000">48 kHz (max)</option>
-            </select>
-            <span id="uptime-display" class="text-secondary small"></span>
-          </div>
-        </div>
-      </div>
+  <!-- ESP32 connection -->
+  <div class="card border-secondary mb-3">
+    <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+      <label class="text-secondary small mb-0">ESP32 IP</label>
+      <input id="esp32-ip-input" type="text" class="form-control form-control-sm w-auto" placeholder="192.168.1.50" />
+      <label class="text-secondary small mb-0 ms-2">Port</label>
+      <input id="esp32-port-input" type="number" class="form-control form-control-sm w-auto" value="80" />
+      <button id="save-config-btn" class="btn btn-sm btn-primary">Save</button>
+      <span id="config-msg" class="text-secondary small ms-2"></span>
     </div>
   </div>
 
   <div class="row g-3">
-
-    <!-- ── Left column: board info ────────────────────────────────────────── -->
-    <div class="col-lg-4">
-
-      <!-- Board Info card -->
-      <div class="card border-secondary mb-3">
-        <div class="card-header text-success fw-semibold small">&#128268; ESP32-S3 Board</div>
-        <div class="card-body p-0">
-          <table class="table table-sm table-dark table-borderless mb-0 info-table">
-            <tbody>
-              <tr><td class="label">Board</td>      <td id="info-board">—</td></tr>
-              <tr><td class="label">Chip</td>       <td id="info-chip">—</td></tr>
-              <tr><td class="label">Revision</td>   <td id="info-revision">—</td></tr>
-              <tr><td class="label">Cores</td>      <td id="info-cores">—</td></tr>
-              <tr><td class="label">Flash</td>      <td id="info-flash">—</td></tr>
-              <tr><td class="label">PSRAM</td>      <td id="info-psram">—</td></tr>
-              <tr><td class="label">Free Heap</td>  <td id="info-heap">—</td></tr>
-              <tr><td class="label">SDK</td>        <td id="info-sdk">—</td></tr>
-              <tr><td class="label">Firmware</td>   <td id="info-fw">—</td></tr>
-              <tr><td class="label">MAC</td>        <td id="info-mac">—</td></tr>
-            </tbody>
-          </table>
+    <!-- Board info -->
+    <div class="col-md-4">
+      <div class="card border-secondary h-100">
+        <div class="card-header py-2">Board Info</div>
+        <div class="card-body small">
+          <div>Chip: <span id="info-chip" class="text-info">—</span></div>
+          <div>Firmware: <span id="info-fw" class="text-info">—</span></div>
+          <div>IP: <span id="info-ip" class="text-info">—</span></div>
+          <div>RSSI: <span id="info-rssi" class="text-info">—</span> dBm</div>
+          <div>Streaming: <span id="info-streaming" class="text-info">—</span></div>
+          <div>Sample rate: <span id="info-sr" class="text-info">—</span> Hz</div>
         </div>
       </div>
+    </div>
 
-      <!-- WiFi card -->
-      <div class="card border-secondary mb-3">
-        <div class="card-header text-info fw-semibold small">&#128246; WiFi</div>
-        <div class="card-body p-0">
-          <table class="table table-sm table-dark table-borderless mb-0 info-table">
-            <tbody>
-              <tr><td class="label">SSID</td>   <td id="info-ssid">—</td></tr>
-              <tr><td class="label">IP</td>      <td id="info-ip">—</td></tr>
-              <tr><td class="label">Signal</td>  <td id="info-rssi">—</td></tr>
-            </tbody>
-          </table>
+    <!-- Level -->
+    <div class="col-md-4">
+      <div class="card border-secondary h-100">
+        <div class="card-header py-2">Current Level</div>
+        <div class="card-body text-center">
+          <div class="display-5 fw-bold" id="level-value">—</div>
+          <div class="text-secondary small">dBFS (RMS, 1 s window)</div>
         </div>
       </div>
+    </div>
 
-      <!-- Microphone wiring card -->
-      <div class="card border-secondary">
-        <div class="card-header text-warning fw-semibold small">&#127897; INMP441 Wiring</div>
-        <div class="card-body p-0">
-          <table class="table table-sm table-dark table-borderless mb-0 info-table">
-            <tbody>
-              <tr><td class="label">Type</td>        <td id="mic-type">—</td></tr>
-              <tr><td class="label">Interface</td>   <td id="mic-interface">—</td></tr>
-              <tr><td class="label">Sample Rate</td> <td id="mic-rate">—</td></tr>
-              <tr><td class="label">Bit Depth</td>   <td id="mic-bits">—</td></tr>
-              <tr><td class="label">Channel</td>     <td id="mic-channel">—</td></tr>
-            </tbody>
-          </table>
-          <hr class="border-secondary my-0" />
-          <table class="table table-sm table-dark table-borderless mb-0 info-table">
-            <thead>
-              <tr>
-                <th class="text-secondary small">Wire</th>
-                <th class="text-secondary small">INMP441 Pin</th>
-                <th class="text-secondary small">ESP32</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr><td><span class="wire-swatch wire-red"></span>Red</td>     <td>VDD</td>   <td id="pin-vdd">3.3V</td></tr>
-              <tr><td><span class="wire-swatch wire-black"></span>Black</td> <td>GND</td>   <td>GND</td></tr>
-              <tr><td><span class="wire-swatch wire-green"></span>Green</td> <td>L/R</td>   <td id="pin-lr">GND</td></tr>
-              <tr><td><span class="wire-swatch wire-orange"></span>Orange</td><td>SCK</td>  <td id="pin-sck">GPIO 4</td></tr>
-              <tr><td><span class="wire-swatch wire-yellow"></span>Yellow</td><td>WS</td>   <td id="pin-ws">GPIO 5</td></tr>
-              <tr><td><span class="wire-swatch wire-brown"></span>Brown</td> <td>SD</td>    <td id="pin-sd">GPIO 6</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-    </div><!-- /left column -->
-
-    <!-- ── Right column: live audio ───────────────────────────────────────── -->
-    <div class="col-lg-8 d-flex flex-column gap-3">
-
-      <!-- Current level meter -->
-      <div class="card border-secondary">
+    <!-- Stream controls -->
+    <div class="col-md-4">
+      <div class="card border-secondary h-100">
+        <div class="card-header py-2">Stream Listener</div>
         <div class="card-body">
-          <div class="d-flex align-items-center gap-3 mb-2">
-            <div>
-              <div class="text-secondary small">Current Level</div>
-              <div class="d-flex align-items-baseline gap-1">
-                <span id="current-db" class="display-4 fw-bold text-success font-mono">—</span>
-                <span class="text-secondary">dBFS</span>
-              </div>
-            </div>
-            <div class="flex-grow-1">
-              <div class="text-secondary small mb-1">Signal Meter</div>
-              <div class="progress" style="height: 20px; background: #1a1a1a;">
-                <div id="level-meter" class="progress-bar bg-success transition-none"
-                     role="progressbar" style="width: 0%"></div>
-              </div>
-              <div class="d-flex justify-content-between text-secondary" style="font-size:0.65rem;">
-                <span>−90 dBFS</span>
-                <span>−60</span>
-                <span>−40</span>
-                <span>−20</span>
-                <span>0 dBFS</span>
-              </div>
-            </div>
+          <div class="d-grid gap-2">
+            <button id="start-btn" class="btn btn-success btn-sm">Start listener</button>
+            <button id="stop-btn" class="btn btn-outline-danger btn-sm">Stop listener</button>
           </div>
+          <div class="small text-secondary mt-2">
+            Port: <span id="ingest-port">—</span><br />
+            Client: <span id="ingest-client">none</span><br />
+            Bytes: <span id="ingest-bytes">0</span>
+          </div>
+          <div id="stream-msg" class="small text-warning mt-2"></div>
         </div>
       </div>
+    </div>
 
-      <!-- Live chart -->
-      <div class="card border-secondary flex-grow-1">
-        <div class="card-header d-flex justify-content-between align-items-center small">
-          <span class="text-secondary fw-semibold">Live Audio Level — 30 second window</span>
-          <div class="d-flex align-items-center gap-2 flex-wrap">
-            <span class="badge bg-success">Quiet &lt;−40</span>
-            <span class="badge bg-warning text-dark">Moderate −40…−20</span>
-            <span class="badge bg-danger">Loud &gt;−20</span>
-            <div class="ms-auto d-flex gap-2 align-items-center">
-              <label class="text-secondary small mb-0">Duration</label>
-              <select id="rec-duration-select" class="form-select form-select-sm" style="width:auto">
-                <option value="3000" selected>3 s</option>
-                <option value="5000">5 s</option>
-                <option value="10000">10 s</option>
-                <option value="20000">20 s</option>
-                <option value="30000">30 s (max)</option>
-              </select>
-              <button id="record-btn" class="btn btn-sm btn-outline-danger">&#9679; Record</button>
-              <button id="stop-btn"   class="btn btn-sm btn-outline-secondary" disabled>&#9632; Stop</button>
-              <button id="replay-btn"   class="btn btn-sm btn-outline-info"      disabled>&#9654; Replay</button>
-              <a     id="download-btn" class="btn btn-sm btn-outline-secondary" style="display:none">&#8681; WAV</a>
-              <span id="rec-duration" class="text-secondary small align-self-center"></span>
-            </div>
-          </div>
-        </div>
-        <div class="card-body" style="min-height: 320px; position: relative;">
-          <canvas id="audioChart"></canvas>
-          <div id="chart-overlay"
-               class="position-absolute top-50 start-50 translate-middle text-secondary text-center">
-            <div class="fs-5">No signal</div>
-            <div class="small">Enter the ESP32 IP address and click Connect</div>
-          </div>
-        </div>
-      </div>
-
+    <!-- Waveform -->
+    <div class="col-12">
       <div class="card border-secondary">
-        <div class="card-header d-flex justify-content-between align-items-center small gap-2 flex-wrap">
-          <span class="text-secondary fw-semibold">Server Archive Timeline</span>
-          <div class="d-flex align-items-center gap-2 flex-wrap">
-            <span id="archive-status-badge" class="badge bg-secondary">Archive unknown</span>
-            <button id="archive-start-btn" class="btn btn-sm btn-outline-success">Start Archive</button>
-            <button id="archive-stop-btn" class="btn btn-sm btn-outline-secondary">Stop Archive</button>
-            <button id="archive-live-btn" class="btn btn-sm btn-outline-info">Play Live</button>
-          </div>
-        </div>
+        <div class="card-header py-2">Live Waveform (dBFS)</div>
         <div class="card-body">
-          <div class="d-flex gap-2 flex-wrap align-items-center mb-3">
-            <span class="text-secondary small">Window</span>
-            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="300000">Last 5 min</button>
-            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="1800000">Last 30 min</button>
-            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="3600000">Last 1 hr</button>
-            <button class="btn btn-sm btn-outline-secondary archive-window-btn" data-window-ms="43200000">Last 12 hr</button>
-            <button id="archive-older-btn" class="btn btn-sm btn-outline-secondary ms-auto">Older</button>
-            <button id="archive-newer-btn" class="btn btn-sm btn-outline-secondary">Newer</button>
-            <button id="archive-latest-btn" class="btn btn-sm btn-outline-secondary">Latest</button>
-          </div>
-
-          <div class="mb-2">
-            <input id="archive-point-slider" type="range" class="form-range" min="0" max="0" value="0" step="1000" disabled />
-            <div class="d-flex justify-content-between text-secondary small gap-2 flex-wrap">
-              <span id="archive-range-start">—</span>
-              <span id="archive-selected-time">No archive point selected</span>
-              <span id="archive-range-end">—</span>
-            </div>
-          </div>
-
-          <div id="archive-chunk-bars" class="archive-bars mb-3"></div>
-
-          <div class="d-flex gap-2 flex-wrap align-items-center mb-2">
-            <label for="archive-duration-select" class="text-secondary small mb-0">Duration</label>
-            <select id="archive-duration-select" class="form-select form-select-sm" style="width:auto;">
-              <option value="10000">10 sec</option>
-              <option value="30000">30 sec</option>
-              <option value="60000" selected>1 min</option>
-              <option value="300000">5 min</option>
-              <option value="600000">10 min</option>
-              <option value="1800000">30 min</option>
-            </select>
-            <button id="archive-play-selection-btn" class="btn btn-sm btn-primary" disabled>▶ Play Selection</button>
-            <button id="archive-download-btn" class="btn btn-sm btn-outline-light" disabled>⤓ Download .wav</button>
-            <span id="archive-window-label" class="text-secondary small ms-auto">No archive loaded</span>
-          </div>
-
-          <audio id="archive-audio" class="w-100 mb-3" controls preload="metadata"></audio>
-
-          <!-- Continuous playback timeline ─────────────────────────────────
-               Plays forward across chunk boundaries indefinitely.
-               Chart shows the dBFS waveform for the loaded window; a red
-               cursor moves with playback. Click the chart to seek by
-               time, not by file. -->
-          <div class="border-top border-secondary pt-3 mt-2">
-            <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-              <button id="playback-play-btn"  class="btn btn-sm btn-success" disabled>▶ Play from here</button>
-              <button id="playback-pause-btn" class="btn btn-sm btn-outline-light" disabled>⏸ Pause</button>
-              <button id="playback-stop-btn"  class="btn btn-sm btn-outline-secondary" disabled>■ Stop</button>
-              <span class="vr"></span>
-              <span class="text-secondary small">Jump</span>
-              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="-600000">⏮ −10m</button>
-              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="-60000">−1m</button>
-              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="-10000">−10s</button>
-              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="10000">+10s</button>
-              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="60000">+1m</button>
-              <button class="btn btn-sm btn-outline-secondary playback-jump-btn" data-jump-ms="600000">+10m ⏭</button>
-              <span id="playback-cursor-time" class="text-info small ms-auto font-mono">—</span>
-            </div>
-            <div style="position: relative; height: 140px;">
-              <canvas id="playbackChart"></canvas>
-              <div id="playback-overlay"
-                   class="position-absolute top-50 start-50 translate-middle text-secondary text-center small">
-                Select a time above and press <strong>▶ Play from here</strong> to play continuously.<br>
-                Click on the waveform below to jump to that exact moment.
-              </div>
-            </div>
-            <div class="d-flex justify-content-between text-secondary small">
-              <span id="playback-window-start">—</span>
-              <span id="playback-status" class="text-secondary">idle</span>
-              <span id="playback-window-end">—</span>
-            </div>
-          </div>
-
-          <div class="text-secondary small mt-3 mb-2">
-            Audio is recorded continuously on the server in short WAV chunks (≈2 s each).
-            Use the slider <em>or click directly on the live waveform above</em> to set the start time,
-            pick a duration, then press <strong>Play Selection</strong> for a fixed-length clip,
-            or <strong>Download .wav</strong> to save and share it.
-            For open-ended listening (5, 10, 100 minutes — whatever) use <strong>▶ Play from here</strong>:
-            the player jumps chunk boundaries automatically and waits for new audio if you catch up to live.
-            Recording is never interrupted by playback.
-          </div>
-          <div id="archive-chunk-list" class="archive-chunk-list small text-secondary"></div>
+          <canvas id="wave-chart" height="120"></canvas>
         </div>
       </div>
-
-    </div><!-- /right column -->
-  </div><!-- /row -->
-</div><!-- /container -->
+    </div>
+  </div>
+</div>
 
 <script src="lib/bootstrap.bundle.min.js"></script>
 <script src="lib/chart.umd.min.js"></script>
-<script src="lib/chartjs-plugin-annotation.min.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>

@@ -1,98 +1,13 @@
-/* ── Globals ──────────────────────────────────────────────────────────────── */
 body {
-  background-color: #0d0d0d;
+  background-color: #121417;
 }
 
-/* ── Info tables ──────────────────────────────────────────────────────────── */
-.info-table td, .info-table th {
-  padding: 0.3rem 0.75rem;
-  font-size: 0.82rem;
-  vertical-align: middle;
-}
-.info-table td.label {
-  color: #6c757d;
-  white-space: nowrap;
-  width: 40%;
+.card {
+  background-color: #1b1f24;
 }
 
-/* ── Level display ────────────────────────────────────────────────────────── */
-.font-mono {
-  font-family: 'Courier New', Courier, monospace;
-  letter-spacing: -1px;
-}
-.transition-none {
-  transition: none !important;
-}
-
-/* ── Chart card grows to fill available vertical space ──────────────────── */
-.col-lg-8 {
-  min-height: 0;
-}
-
-/* ── Scrollbar ────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: #1a1a1a; }
-::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-
-/* ── Wire-color swatches (INMP441 wiring) ───────────────────────────────── */
-.wire-swatch {
-  display: inline-block;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  margin-right: 6px;
-  vertical-align: middle;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
-}
-.wire-red    { background: #e53935; }
-.wire-yellow { background: #fdd835; }
-.wire-orange { background: #fb8c00; }
-.wire-brown  { background: #6d4c41; }
-.wire-green  { background: #43a047; }
-.wire-black  { background: #212121; border-color: rgba(255,255,255,0.4); }
-
-.archive-bars {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(20px, 1fr);
-  gap: 6px;
-  min-height: 78px;
-  align-items: end;
-}
-
-.archive-bar {
-  appearance: none;
-  border: 1px solid rgba(255,255,255,0.14);
-  border-radius: 10px 10px 4px 4px;
-  background: linear-gradient(180deg, rgba(255,170,0,0.75), rgba(0,255,136,0.25));
-  min-height: 12px;
-  cursor: pointer;
-}
-
-.archive-bar.is-selected {
-  border-color: rgba(255,255,255,0.8);
-  box-shadow: 0 0 0 2px rgba(255,255,255,0.14);
-}
-
-.archive-chunk-list {
-  display: grid;
-  gap: 8px;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.archive-chunk-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-  border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 10px;
-  padding: 8px 10px;
-  background: rgba(255,255,255,0.03);
-}
-
-.archive-chunk-row button {
-  white-space: nowrap;
+.card-header {
+  background-color: #20262d;
+  border-bottom: 1px solid #2c333b;
+  font-weight: 500;
 }

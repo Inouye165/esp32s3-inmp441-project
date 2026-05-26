@@ -197,6 +197,21 @@ class AudioIngestService extends EventEmitter {
     });
   }
 
+  async stop(): Promise<void> {
+    if (this.currentSocket) {
+      try { this.currentSocket.destroy(); } catch { /* ignore */ }
+      this.currentSocket = null;
+      this.clientAddress = null;
+    }
+    if (this.server) {
+      const srv = this.server;
+      this.server = null;
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+      this.listening = false;
+      console.log('[Ingest] listener stopped');
+    }
+  }
+
   // ───────────────────────────────────────────────────────────────────────────
 
   private handleSocket(sock: net.Socket): void {

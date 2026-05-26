@@ -1,23 +1,20 @@
-#pragma once
+﻿#pragma once
 
 #include <WebServer.h>
 
 // =============================================================================
-// HttpApi — ESP32 REST API server
+// HttpApi — minimal ESP32 REST API server (post streaming-only refactor)
 //
 // Endpoints:
-//   GET /           → 200 OK (health check)
-//   GET /api/info   → JSON board & microphone metadata
-//   GET /api/audio/level → JSON current audio level (poll as fast as desired)
+//   GET /            → 200 OK plain text (root health)
+//   GET /api/info    → JSON board + microphone + stream metadata
+//   GET /api/health  → JSON liveness / uptime / streaming flag
+//
+// All audio is delivered out-of-band via the audio_stream TCP task.
 // =============================================================================
 
-/**
- * Register all route handlers and start the server.
- * Must be called after WiFi is connected.
- */
+/** Register all route handlers and start the server. Call after WiFi is up. */
 void httpApiBegin(WebServer& server);
 
-/**
- * Must be called from loop() to process incoming HTTP requests.
- */
+/** Must be called from loop() to process incoming HTTP requests. */
 void httpApiHandle(WebServer& server);
