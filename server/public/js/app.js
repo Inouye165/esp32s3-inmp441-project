@@ -70,8 +70,8 @@ async function loadConfig() {
   const r = await fetch('/api/config');
   if (!r.ok) return;
   const c = await r.json();
-  els.ipInput.value = c.esp32Ip || '';
-  els.portInput.value = c.esp32Port || 80;
+  els.ipInput.value = c.ip || '';
+  els.portInput.value = c.port || 80;
 }
 
 els.saveBtn.addEventListener('click', async () => {
@@ -81,8 +81,8 @@ els.saveBtn.addEventListener('click', async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        esp32Ip: els.ipInput.value.trim(),
-        esp32Port: parseInt(els.portInput.value, 10),
+        ip: els.ipInput.value.trim(),
+        port: parseInt(els.portInput.value, 10),
       }),
     });
     const body = await r.json();
