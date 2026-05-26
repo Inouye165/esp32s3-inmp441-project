@@ -153,6 +153,34 @@ class AudioIngestService extends EventEmitter {
     return this.dbRing.filter((s) => s.t_ms > sinceMs);
   }
 
+  getRecordings(): Array<{
+    relative_path: string;
+    absolute_path: string;
+    start_ms: number;
+    duration_ms: number;
+    is_live: boolean;
+  }> {
+    const toMs = (bytes: number, rate: number) =>
+      rate > 0 ? (bytes * 1000) / (rate * this.bytesPerSample) : 0;
+    const out = this.hourFiles.map((f) => ({
+      relative_path: f.relative_path,
+      absolute_path: f.absolute_path,
+      start_ms: f.start_ms,
+      duration_ms: toMs(f.bytes_written, f.sample_rate),
+      is_live: false,
+    }));
+    if (this.currentHour && this.currentHour.bytes_written > 0) {
+      out.push({
+        relative_path: this.currentHour.relative_path,
+        absolute_path: this.currentHour.absolute_path,
+        start_ms: this.currentHour.start_ms,
+        duration_ms: toMs(this.currentHour.bytes_written, this.currentHour.sample_rate),
+        is_live: true,
+      });
+    }
+    return out;
+  }
+
   // True if any hour file (or the live ring) covers any portion of the range.
   hasDataInRange(startMs: number, endMs: number): boolean {
     if (this.audioClockMs !== null && startMs < this.audioClockMs && endMs > (this.streamStartMs ?? 0)) {

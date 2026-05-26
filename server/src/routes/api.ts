@@ -1,4 +1,5 @@
 ﻿import { Router, Request, Response } from 'express';
+import fsp from 'fs/promises';
 import { config, runtimeConfig } from '../config';
 import { audioIngest } from '../services/audioIngest';
 import { fetchBoardInfo } from '../services/esp32Service';
@@ -115,6 +116,51 @@ router.get('/stream/live-samples', (_req: Request, res: Response) => {
     audioIngest.off('live-samples', onSamples);
     res.end();
   });
+});
+
+// ─── /api/stream/recordings — list saved hour files ──────────────────────────
+
+router.get('/stream/recordings', (_req: Request, res: Response) => {
+  const recs = audioIngest.getRecordings();
+  res.json(
+    recs.map((r) => ({
+      relative_path: r.relative_path,
+      start_ms: r.start_ms,
+      duration_ms: r.duration_ms,
+      is_live: r.is_live,
+    })),
+  );
+});
+
+// ─── /api/stream/file/* — serve a WAV recording ──────────────────────────────
+
+router.get('/stream/file/*', async (req: Request, res: Response) => {
+  const relPath = (req.params as Record<string, string>)[0] ?? '';
+  const recs = audioIngest.getRecordings();
+  const rec = recs.find((r) => r.relative_path === relPath);
+  if (!rec) {
+    res.status(404).json({ error: 'recording not found' });
+    return;
+  }
+  res.setHeader('Content-Type', 'audio/wav');
+  if (rec.is_live) {
+    // The live file has placeholder 0-values in the WAV header. Read it,
+    // patch the RIFF/data sizes, then send — lets the browser play it.
+    try {
+      const buf = await fsp.readFile(rec.absolute_path);
+      const dataBytes = buf.length - 44;
+      if (dataBytes > 0) {
+        buf.writeUInt32LE(36 + dataBytes, 4);   // RIFF chunk size
+        buf.writeUInt32LE(dataBytes, 40);        // data chunk size
+      }
+      res.setHeader('Content-Length', buf.length);
+      res.send(buf);
+    } catch {
+      res.status(500).json({ error: 'could not read live recording' });
+    }
+  } else {
+    res.sendFile(rec.absolute_path);
+  }
 });
 
 export default router;

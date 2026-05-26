@@ -10,8 +10,9 @@ export function createApp() {
   app.use(cors());
   app.use(express.json());
 
-  // Serve static frontend files
-  app.use(express.static(path.join(__dirname, '../public')));
+  // Serve static frontend files (JS, CSS, images) with normal caching.
+  // index: false so index.html is NOT served here — it gets no-store below.
+  app.use(express.static(path.join(__dirname, '../public'), { index: false }));
 
   // API routes
   app.use(routes);
@@ -21,8 +22,11 @@ export function createApp() {
     res.status(404).json({ error: 'API route not found' });
   });
 
-  // Serve the SPA for all other paths
+  // Serve index.html for all other paths (SPA fallback).
+  // no-store prevents Chrome from caching the shell — fixes the "paste URL
+  // and nothing happens until hard-reload" symptom.
   app.get('*', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
     res.sendFile(path.join(__dirname, '../public/index.html'));
   });
 

@@ -186,3 +186,61 @@ pollIngest();
 connectLiveSamples();
 setInterval(pollBoard, 5000);
 setInterval(pollIngest, 2000);
+
+// --- Recordings ------------------------------------------------------------
+
+const recsList    = document.getElementById('recordings-list');
+const audioPlayer = document.getElementById('audio-player');
+
+function fmtDuration(ms) {
+  const s = Math.round(ms / 1000);
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  if (s >= 60)   return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${s}s`;
+}
+
+async function loadRecordings() {
+  try {
+    const r = await fetch('/api/stream/recordings');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const recs = await r.json();
+    recsList.innerHTML = '';
+    if (!recs.length) {
+      recsList.innerHTML = '<div class="text-secondary small p-2">No recordings yet.</div>';
+      return;
+    }
+    // newest first
+    recs.slice().reverse().forEach((rec) => {
+      const dt     = new Date(rec.start_ms).toLocaleString();
+      const dur    = fmtDuration(rec.duration_ms);
+      const btn    = document.createElement('button');
+      btn.className =
+        'list-group-item list-group-item-action d-flex justify-content-between ' +
+        'align-items-center py-1 px-2 bg-transparent border-secondary text-light small';
+      btn.innerHTML =
+        `<span>${dt}</span>` +
+        `<span class="d-flex gap-2 align-items-center">` +
+        (rec.is_live ? '<span class="badge bg-success">live</span>' : '') +
+        `<span class="text-secondary">${dur}</span>` +
+        `<span class="badge bg-secondary">WAV</span>` +
+        `</span>`;
+      btn.addEventListener('click', () => {
+        recsList.querySelectorAll('.list-group-item').forEach((el) =>
+          el.classList.remove('active'),
+        );
+        btn.classList.add('active');
+        audioPlayer.src = '/api/stream/file/' + rec.relative_path;
+        audioPlayer.style.display = '';
+        audioPlayer.play().catch(() => {});
+      });
+      recsList.appendChild(btn);
+    });
+  } catch (e) {
+    recsList.innerHTML = `<div class="text-danger small p-2">${e}</div>`;
+  }
+}
+
+document.getElementById('refresh-recs-btn').addEventListener('click', loadRecordings);
+loadRecordings();
+// auto-refresh list every 30 s so the live entry's duration stays roughly current
+setInterval(loadRecordings, 30000);
