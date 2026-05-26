@@ -1,13 +1,27 @@
-# ESP32-S3 · INMP441 Audio Monitor
+# ESP32-S3 · INMP441 Audio Streamer
 
-Real-time audio level dashboard for the ESP32-S3 + INMP441 I²S microphone.
+Real-time audio streaming dashboard for the ESP32-S3 + INMP441 I²S microphone.
+The ESP32 is a **dumb streamer** — it reads raw PCM over I²S and pushes it to
+the desktop server over a persistent TCP connection. All recording, waveform
+display, dBFS computation, and future analysis live on the server.
 
 ```
-┌─────────────┐   I²S    ┌──────────┐   WiFi    ┌─────────────────┐   HTTP
-│   INMP441   │ ────────▶│ ESP32-S3 │ ─────────▶│  Desktop Server │◀──────── Browser
-│  Microphone │          │ REST API │           │  (TypeScript)   │
-└─────────────┘          └──────────┘           └─────────────────┘
+┌─────────────┐   I²S    ┌──────────┐  TCP raw PCM  ┌─────────────────┐   SSE/HTTP
+│   INMP441   │ ────────▶│ ESP32-S3 │ ─────────────▶│  Desktop Server │◀────────── Browser
+│  Microphone │          │ Streamer │  16 kHz int16  │  (TypeScript)   │
+└─────────────┘          └──────────┘                └─────────────────┘
 ```
+
+### Streaming protocol
+
+| Field | Value |
+|-------|-------|
+| Transport | Raw TCP (persistent connection) |
+| Port | `8001` (server-side listener) |
+| Preamble | 8 bytes: `PCM1` magic (LE u32) + sample rate (LE u32) |
+| Payload | int16 LE mono PCM, continuous |
+| Sample rate | 16 000 Hz |
+| Gain | 32× (24→16 bit conversion + level boost) |
 
 ## Wiring  —  ESP32-S3-WROOM-1 (N16R8)
 
@@ -30,112 +44,96 @@ and avoid every reserved function on the N16R8 variant:
 If you need to relocate, any of GPIO **7–18** are equally safe.
 Avoid GPIO 19/20 (USB), 26–37 (flash/PSRAM), 43/44 (UART), 45/46 (strap).
 
-## Setup History And Issues
-
-This project started with a misleading hardware assumption: the repository name
-and initial wiring notes said "ESP32-S3", but the board that was physically
-connected at first was a **classic ESP32 (ESP32-D0WD-V3)**. That mattered.
-
-- The original attached board was not an S3. We confirmed that from the upload
-    logs, which identified it as `ESP32-D0WD-V3` with 4 MB flash.
-- The working board is now an **ESP32-S3-WROOM-1 (16 MB flash / 8 MB PSRAM)**.
-- The classic ESP32 build produced WiFi connectivity and HTTP responses, but it
-    never gave reliable microphone data for this wiring/layout.
-- Once the hardware actually matched the intended S3 target, the same project
-    started behaving normally.
-
-Main failure modes we hit during bring-up:
-
-- **Wrong board assumption**: firmware and docs were written as if an S3 was
-    connected, while the attached hardware was an older ESP32.
-- **Unsafe / stale I2S pin choices**: the older board had already been moved
-    around to work around pin conflicts. On the final S3 setup we standardized on
-    GPIO 4 / 5 / 6 for BCLK / LRCLK / DOUT.
-- **Very quiet recordings**: the old recorder used fixed-gain live streaming.
-    Quiet takes stayed quiet because the firmware could not see the final peak of
-    the whole recording. The current S3 firmware buffers the take in PSRAM and
-    normalizes it before returning the WAV.
-- **Waveform pause during recording**: expected with the current legacy I2S
-    driver. The recording path takes exclusive ownership of I2S, so the live
-    level display pauses or flatlines while a recording is in progress.
-
-If audio works on an ESP32-S3-WROOM-1 but not on a plain ESP32 dev board, trust
-the hardware result. In this project, that difference was real rather than a
-software illusion.
-
 ## Project Structure
 
 ```
-├── firmware/          # PlatformIO / Arduino — ESP32 REST API
-│   ├── include/config.h        WiFi credentials, pin definitions
+├── firmware/          # PlatformIO / Arduino — ESP32 streaming firmware
+│   ├── include/
+│   │   ├── config.h            Pin definitions, I²S settings, stream config
+│   │   └── secrets.h           WiFi credentials + STREAM_HOST (gitignored)
 │   └── src/
-│       ├── main.cpp            Setup + FreeRTOS task orchestration
+│       ├── main.cpp            setup(): WiFi → micInit → HTTP → stream task
 │       ├── wifi_manager.*      WiFi connection helper
-│       ├── i2s_microphone.*    I²S driver + RMS/dBFS computation
-│       └── http_api.*          Express-style route handlers (WebServer)
+│       ├── i2s_microphone.*    I²S driver + DC blocker
+│       ├── audio_stream.*      TCP streaming task (sole I²S owner)
+│       └── http_api.*          /api/info and /api/health only
 │
-└── server/            # TypeScript / Express — dashboard + proxy
+└── server/            # TypeScript / Express — dashboard + ingest
     ├── src/
     │   ├── server.ts           Entry point
     │   ├── app.ts              Express app factory
     │   ├── config.ts           Runtime + env config
-    │   ├── routes/api.ts       /api/config, /api/proxy/*
-    │   ├── services/esp32Service.ts  Typed fetch + pure parse helpers
+    │   ├── routes/api.ts       REST + SSE endpoints
+    │   ├── services/
+    │   │   ├── audioIngest.ts  TCP listener, PCM→dBFS, rolling WAV files
+    │   │   └── esp32Service.ts Typed fetch helpers for /api/info
     │   └── types/index.ts      Shared TypeScript interfaces
-    ├── public/                 Static web dashboard (HTML + Chart.js)
-    └── tests/                  Jest unit tests (19 tests)
+    ├── public/                 Minimal web dashboard (HTML + Chart.js)
+    └── tests/                  Jest unit tests (20 tests)
 ```
 
 ## Quick Start
 
-### 1 — Flash the ESP32
+### 1 — Configure secrets
+
+```bash
+# firmware/include/secrets.h  (gitignored — never committed)
+#define WIFI_SSID    "your-network"
+#define WIFI_PASSWORD "your-password"
+#define STREAM_HOST  "10.0.0.x"   # desktop IP where the server runs
+```
+
+### 2 — Flash the ESP32
 
 ```bash
 cd firmware
-pio run --target upload          # flashes COM6 on the current ESP32-S3 setup
-pio device monitor               # watch serial output for the ESP32's IP
+pio run --target upload
+pio device monitor               # watch serial for WiFi IP + stream connection
 ```
 
-### 2 — Start the desktop server
+### 3 — Start the desktop server
 
 ```bash
 cd server
-cp .env.local.example .env.local
-# edit .env.local and set ESP32_IP=<the IP shown in serial monitor>
+# server/.env.local  (gitignored)
+# ESP32_IP=10.0.0.x
+# ESP32_PORT=80
+# STREAM_INGEST_ENABLED=true
+
 npm run dev
 ```
 
-Open **http://localhost:3000** in your browser.
+Open **http://localhost:3000**. The ingest listener starts automatically.
+Click **Start listener** if it hasn't auto-started, then watch the waveform fill in.
 
-You can also set the ESP32 IP from the dashboard UI without restarting the server.
-Server-side machine-local settings belong in `server/.env.local`, which is not committed.
-
-### 3 — Tests
+### 4 — Tests
 
 ```bash
 cd server
-npm test               # run all unit tests
-npm run test:coverage  # with coverage report
+npm test
 ```
 
 ## ESP32 REST API
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/` | Health check |
-| GET | `/api/info` | Board + microphone metadata (JSON) |
-| GET | `/api/audio/level` | Current dBFS level (JSON, poll freely) |
+| GET | `/` | Firmware version string |
+| GET | `/api/info` | Board + microphone + stream metadata (JSON) |
+| GET | `/api/health` | Uptime, RSSI, streaming flag, free heap (JSON) |
 
-All responses include `Access-Control-Allow-Origin: *` headers.
+All responses include `Access-Control-Allow-Origin: *`.
 
 ## Desktop Server API
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/api/health` | Server uptime + ingest status |
 | GET | `/api/config` | Current ESP32 IP/port |
-| POST | `/api/config` | Set ESP32 IP (`{ "ip": "x.x.x.x" }`) |
-| GET | `/api/proxy/info` | Proxied board info |
-| GET | `/api/proxy/audio/level` | Proxied audio level |
+| POST | `/api/config` | Set ESP32 IP/port (`{ "ip": "x.x.x.x", "port": 80 }`) |
+| GET | `/api/proxy/info` | Proxied board info (120 s stale cache on failure) |
+| GET | `/api/stream/status` | Ingest listener status |
+| POST | `/api/stream/listener` | Start/stop listener (`{ "enabled": true }`) |
+| GET | `/api/stream/live-samples` | SSE stream of dBFS samples (drives waveform) |
 
 ## Tech Stack
 
@@ -144,6 +142,9 @@ All responses include `Access-Control-Allow-Origin: *` headers.
 | Firmware | C++ · Arduino / ESP-IDF · FreeRTOS |
 | Audio driver | ESP32 I²S legacy driver (`driver/i2s.h`) |
 | HTTP server (device) | ESP32 `WebServer` · ArduinoJson |
-| Desktop server | TypeScript · Express 4 · Node 18+ |
+| Stream transport | Raw TCP, int16 LE PCM, 8-byte preamble |
+| Desktop server | TypeScript · Express 4 · Node 20+ |
+| Ingest service | `net.Server` TCP listener, rolling WAV files |
+| Live waveform | SSE (`text/event-stream`) → Chart.js |
 | Testing | Jest · ts-jest · Supertest |
 | Dashboard | Bootstrap 5 · Chart.js 4 · Vanilla JS |
