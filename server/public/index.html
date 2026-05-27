@@ -271,6 +271,22 @@
   </div>
 </div>
 
+<!-- Network disconnection overlay -->
+<div id="network-overlay" class="network-overlay d-none">
+  <div class="network-overlay-content">
+    <svg class="prohibition-icon" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="6" fill="none" />
+      <line x1="15" y1="85" x2="85" y2="15" stroke="currentColor" stroke-width="6" stroke-linecap="round" />
+    </svg>
+    <h2 class="mt-4">No or Wrong Network</h2>
+    <p class="text-secondary mb-1">This application requires connection to:</p>
+    <p class="text-info fw-semibold" id="allowed-networks-text">an allowed network</p>
+    <p class="text-secondary small" id="current-network-text">Checking network...</p>
+    <div class="mt-4">
+      <button id="quit-to-network-check-btn" class="btn btn-danger btn-lg px-4">Quit</button>
+    </div>
+  </div>
+</div>
 
 <script src="lib/bootstrap.bundle.min.js"></script>
 <script src="lib/chart.umd.min.js"></script>

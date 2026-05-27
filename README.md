@@ -99,18 +99,68 @@ pio device monitor               # watch serial for WiFi IP + stream connection
 
 ### 3 — Start the desktop server
 
+#### Prerequisites
+
+- **Node.js 20+** installed
+- **WiFi connection** to **Dobby** or **Pumpkinpie** network (required for access)
+
+#### Installation
+
 ```bash
 cd server
-# server/.env.local  (gitignored)
-# ESP32_IP=10.0.0.x
-# ESP32_PORT=80
-# STREAM_INGEST_ENABLED=true
+npm install
+```
 
+#### Configuration
+
+Create `server/.env.local` (gitignored) with your settings:
+
+```bash
+# Network access control (comma-separated WiFi SSIDs)
+# Only allow access when connected to these networks
+ALLOWED_NETWORKS=YourNetwork1,YourNetwork2
+
+# ESP32 device IP and port (for proxy requests)
+ESP32_IP=10.0.0.x
+ESP32_PORT=80
+
+# Enable audio streaming ingest
+STREAM_INGEST_ENABLED=true
+STREAM_INGEST_PORT=8001
+
+# Optional: Enable Unit 2 (ESP32 Classic)
+STREAM_INGEST2_ENABLED=false
+STREAM_INGEST2_PORT=8002
+
+# Server port (default: 3000)
+PORT=3000
+```
+
+#### Starting the Server
+
+**Development mode** (with hot reload):
+```bash
 npm run dev
 ```
 
-Open **http://localhost:3000**. The ingest listener starts automatically.
-Click **Start listener** if it hasn't auto-started, then watch the waveform fill in.
+**Production mode**:
+```bash
+npm run build    # Compile TypeScript to dist/
+npm start        # Run compiled server
+```
+
+#### Accessing the Dashboard
+
+1. Open **http://localhost:3000** in your browser
+2. **Network validation** — The app checks your WiFi connection:
+   - ✅ **Connected to allowed network**: Full access to dashboard
+   - ❌ **Wrong/No network**: Disabled interface with "Quit" option
+   - Click **Quit** → Network check page (auto-refreshes when correct network detected)
+   - 🔧 **Configure allowed networks** in `server/.env.local` (see Configuration section)
+
+3. The TCP ingest listener starts automatically on port **8001**
+4. Configure ESP32 IP in the dashboard UI or use the `.env.local` settings
+5. Click **Start listener** if it hasn't auto-started, then watch the waveform fill in
 
 ### 4 — Tests
 

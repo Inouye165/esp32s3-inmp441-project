@@ -2,6 +2,124 @@
 
 const MAX_POINTS = 600;
 
+// ─── Network connectivity guard ─────────────────────────────────────────────
+
+let isNetworkConnected = null; // null = unknown, allows first check to always execute
+let networkCheckInterval = null;
+const networkOverlay = document.getElementById('network-overlay');
+const mainTabs = document.getElementById('main-tabs');
+const currentNetworkText = document.getElementById('current-network-text');
+const allowedNetworksText = document.getElementById('allowed-networks-text');
+const quitToNetworkCheckBtn = document.getElementById('quit-to-network-check-btn');
+
+async function checkNetworkConnectivity() {
+  console.log('[Network Check] Starting network validation...');
+  try {
+    const r = await fetch('/api/network/check', {
+      method: 'GET',
+      cache: 'no-cache',
+      signal: AbortSignal.timeout(3000),
+    });
+    
+    if (r.ok) {
+      const data = await r.json();
+      console.log('[Network Check] Response:', data);
+      
+      // Update allowed networks display
+      if (data.allowedNetworks && data.allowedNetworks.length > 0) {
+        allowedNetworksText.textContent = data.allowedNetworks.join(' or ');
+      }
+      
+      // Update current network display
+      if (data.connected && data.networkName) {
+        currentNetworkText.textContent = `Current network: ${data.networkName}`;
+      } else {
+        currentNetworkText.textContent = 'No WiFi connection detected';
+      }
+      
+      // Only allow access if on approved network
+      if (data.isAllowed) {
+        console.log('[Network Check] ✓ Network allowed - enabling interface');
+        setNetworkConnected(true);
+        return true;
+      } else {
+        console.log('[Network Check] ✗ Network NOT allowed - showing overlay');
+        setNetworkConnected(false);
+        return false;
+      }
+    }
+    
+    console.log('[Network Check] Request failed');
+    setNetworkConnected(false);
+    return false;
+  } catch (err) {
+    console.error('[Network Check] Error:', err);
+    currentNetworkText.textContent = 'Unable to check network status';
+    setNetworkConnected(false);
+    return false;
+  }
+}
+
+function setNetworkConnected(connected) {
+  console.log(`[Network Check] setNetworkConnected(${connected}) - current state: ${isNetworkConnected}`);
+  if (isNetworkConnected === connected) {
+    console.log('[Network Check] State unchanged, skipping');
+    return;
+  }
+  isNetworkConnected = connected;
+
+  if (connected) {
+    console.log('[Network Check] Hiding overlay, enabling interactions');
+    networkOverlay.classList.add('d-none');
+    enableAllInteractions();
+  } else {
+    console.log('[Network Check] Showing overlay, disabling interactions');
+    networkOverlay.classList.remove('d-none');
+    disableAllInteractions();
+  }
+}
+
+function disableAllInteractions() {
+  // Disable all tab navigation
+  const tabButtons = mainTabs.querySelectorAll('button[data-bs-toggle="tab"]');
+  tabButtons.forEach(btn => {
+    btn.disabled = true;
+    btn.style.pointerEvents = 'none';
+  });
+
+  // Disable all inputs and buttons in the dashboard
+  document.querySelectorAll('input, button, select, textarea, a').forEach(el => {
+    if (!el.closest('#network-overlay')) {
+      el.disabled = true;
+      el.style.pointerEvents = 'none';
+    }
+  });
+}
+
+function enableAllInteractions() {
+  // Enable tab navigation
+  const tabButtons = mainTabs.querySelectorAll('button[data-bs-toggle="tab"]');
+  tabButtons.forEach(btn => {
+    btn.disabled = false;
+    btn.style.pointerEvents = '';
+  });
+
+  // Enable all inputs and buttons
+  document.querySelectorAll('input, button, select, textarea, a').forEach(el => {
+    if (!el.closest('#network-overlay')) {
+      el.disabled = false;
+      el.style.pointerEvents = '';
+    }
+  });
+}
+
+function guardedFetch(url, options) {
+  if (!isNetworkConnected) {
+    return Promise.reject(new Error('Network not connected'));
+  }
+  return fetch(url, options);
+}
+
 const els = {
   boardStatus:   document.getElementById('board-status'),
   ingestStatus:  document.getElementById('ingest-status'),
@@ -92,7 +210,7 @@ function pushSample2(s) {
 // ─── Dashboard config ───────────────────────────────────────────────────────
 
 async function loadConfig() {
-  const r = await fetch('/api/config');
+  const r = await guardedFetch('/api/config');
   if (!r.ok) return;
   const c = await r.json();
   els.ipInput.value   = c.ip   || '';
@@ -102,7 +220,7 @@ async function loadConfig() {
 els.saveBtn.addEventListener('click', async () => {
   els.configMsg.textContent = 'Saving…';
   try {
-    const r = await fetch('/api/config', {
+    const r = await guardedFetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -126,7 +244,7 @@ async function pollBoard() {
       els.boardStatus.textContent = 'not configured';
       return;
     }
-    const r = await fetch('/api/proxy/info');
+    const r = await guardedFetch('/api/proxy/info');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const info = await r.json();
     els.boardStatus.className   = 'badge bg-success';
@@ -152,7 +270,7 @@ function applyIngestBadge(el, s) {
 
 async function pollIngest() {
   try {
-    const r = await fetch('/api/stream/status');
+    const r = await guardedFetch('/api/stream/status');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const s = await r.json();
     applyIngestBadge(els.ingestStatus, s);
@@ -168,7 +286,7 @@ async function pollIngest() {
 async function setListener(enabled) {
   els.streamMsg.textContent = '';
   try {
-    const r = await fetch('/api/stream/listener', {
+    const r = await guardedFetch('/api/stream/listener', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
@@ -188,7 +306,7 @@ els.stopBtn .addEventListener('click', () => setListener(false));
 
 async function pollIngest2() {
   try {
-    const r = await fetch('/api/stream2/status');
+    const r = await guardedFetch('/api/stream2/status');
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const s = await r.json();
     applyIngestBadge(els.ingest2Status, s);
@@ -206,7 +324,7 @@ async function pollIngest2() {
 async function setListener2(enabled) {
   els.u2Msg.textContent = '';
   try {
-    const r = await fetch('/api/stream2/listener', {
+    const r = await guardedFetch('/api/stream2/listener', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ enabled }),
@@ -347,7 +465,7 @@ function renderModules() {
 
 async function loadModules() {
   try {
-    const r = await fetch('/api/modules');
+    const r = await guardedFetch('/api/modules');
     modules = await r.json();
     renderModules();
   } catch (e) {
@@ -466,7 +584,7 @@ async function uploadImage(file) {
   fd.append('image', file);
 
   try {
-    const r = await fetch(`/api/modules/${encodeURIComponent(currentModule.id)}/image`, {
+    const r = await guardedFetch(`/api/modules/${encodeURIComponent(currentModule.id)}/image`, {
       method: 'POST',
       body: fd,
     });
@@ -486,7 +604,7 @@ modEls.modalRemoveBtn.addEventListener('click', async () => {
   if (!confirm('Remove this module photo?')) return;
   modEls.modalImgMsg.innerHTML = '<span class="text-info">Removing…</span>';
   try {
-    const r = await fetch(`/api/modules/${encodeURIComponent(currentModule.id)}/image`, {
+    const r = await guardedFetch(`/api/modules/${encodeURIComponent(currentModule.id)}/image`, {
       method: 'DELETE',
     });
     if (!r.ok) {
@@ -510,7 +628,7 @@ modEls.modalSaveIpBtn.addEventListener('click', async () => {
   const port = parseInt(modEls.modalPortInput.value, 10);
   modEls.modalIpMsg.innerHTML = '<span class="text-info">Saving…</span>';
   try {
-    const r = await fetch(`/api/modules/${encodeURIComponent(currentModule.id)}`, {
+    const r = await guardedFetch(`/api/modules/${encodeURIComponent(currentModule.id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip, port }),
@@ -536,7 +654,7 @@ async function sendLed(cmd) {
   modEls.modalLedMsg.innerHTML =
     `<span class="text-info">Sending <code>${cmd}</code>…</span>`;
   try {
-    const r = await fetch(
+    const r = await guardedFetch(
       `/api/modules/${encodeURIComponent(currentModule.id)}/led/${cmd}`,
       { method: 'POST' },
     );
@@ -553,17 +671,58 @@ modEls.modalLedOn   .addEventListener('click', () => sendLed('on'));
 modEls.modalLedOff  .addEventListener('click', () => sendLed('off'));
 modEls.modalLedBlink.addEventListener('click', () => sendLed('blink'));
 
+// Open device page in new tab (handle click explicitly to avoid extension interference)
+modEls.modalOpenLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  const url = modEls.modalOpenLink.href;
+  if (url && url !== '#') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+});
+
 // Refresh modules whenever the Modules tab is shown
 document.getElementById('modules-tab').addEventListener('shown.bs.tab', loadModules);
 
+// ─── Network overlay quit button ────────────────────────────────────────────
+
+quitToNetworkCheckBtn.addEventListener('click', () => {
+  window.location.href = '/network-check.html';
+});
+
 // ─── Boot ───────────────────────────────────────────────────────────────────
 
-loadConfig().then(pollBoard);
-pollIngest();
-pollIngest2();
-connectLiveSamples();
-connectLiveSamples2();
-loadModules();
-setInterval(pollBoard,   5000);
-setInterval(pollIngest,  2000);
-setInterval(pollIngest2, 2000);
+async function initializeApp() {
+  // Check network connectivity first
+  const connected = await checkNetworkConnectivity();
+  
+  if (connected) {
+    // Only start normal operations if connected
+    loadConfig().then(pollBoard);
+    pollIngest();
+    pollIngest2();
+    connectLiveSamples();
+    connectLiveSamples2();
+    loadModules();
+    setInterval(pollBoard,   5000);
+    setInterval(pollIngest,  2000);
+    setInterval(pollIngest2, 2000);
+  }
+  
+  // Check connectivity every 3 seconds
+  networkCheckInterval = setInterval(async () => {
+    const wasConnected = isNetworkConnected;
+    await checkNetworkConnectivity();
+    
+    // If we just connected (was not connected before, now is)
+    if (wasConnected === false && isNetworkConnected === true) {
+      console.log('[Network Check] Network became valid! Reloading page...');
+      location.reload();
+    }
+    // If we just disconnected (was connected before, now is not)
+    if (wasConnected === true && isNetworkConnected === false) {
+      console.log('[Network Check] Network became invalid! Showing overlay...');
+    }
+  }, 3000);
+}
+
+initializeApp();

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Network Check - ESP32 INMP441 Streamer</title>
+  <link rel="stylesheet" href="lib/bootstrap.min.css" />
+  <link rel="stylesheet" href="css/style.css" />
+  <style>
+    body {
+      background: linear-gradient(135deg, #1a1d24 0%, #0a0c10 100%);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .network-check-container {
+      max-width: 600px;
+      width: 100%;
+      padding: 2rem;
+    }
+    
+    .network-check-card {
+      background: #1b1f24;
+      border: 1px solid #2c333b;
+      border-radius: 16px;
+      padding: 3rem;
+      text-align: center;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    }
+    
+    .network-icon {
+      width: 120px;
+      height: 120px;
+      margin: 0 auto 2rem;
+    }
+    
+    .network-icon.checking {
+      color: #6c757d;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    
+    .network-icon.connected {
+      color: #4ade80;
+    }
+    
+    .network-icon.disconnected {
+      color: #dc3545;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    .network-name {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+    }
+    
+    .network-status {
+      font-size: 1rem;
+      color: #9aa3ad;
+      margin-bottom: 2rem;
+    }
+    
+    .allowed-networks {
+      background: #20262d;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 2rem;
+    }
+    
+    .allowed-networks h6 {
+      color: #6c757d;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+    
+    .allowed-networks ul {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    
+    .allowed-networks li {
+      color: #4ade80;
+      padding: 0.25rem 0;
+      font-weight: 500;
+    }
+    
+    .spinner-border {
+      width: 2rem;
+      height: 2rem;
+    }
+  </style>
+</head>
+<body>
+
+<div class="network-check-container">
+  <div class="network-check-card">
+    <!-- Network Icon -->
+    <svg id="network-icon" class="network-icon checking" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="50" cy="50" r="45" stroke="currentColor" stroke-width="3" fill="none" opacity="0.3" />
+      <path d="M 50 20 Q 30 35, 30 50 T 50 80 Q 70 65, 70 50 T 50 20" stroke="currentColor" stroke-width="3" fill="none" />
+      <circle cx="50" cy="50" r="8" fill="currentColor" />
+    </svg>
+    
+    <!-- Status Display -->
+    <div id="status-display">
+      <div class="network-name" id="network-name">Checking network...</div>
+      <div class="network-status" id="network-status">Please wait</div>
+    </div>
+    
+    <!-- Allowed Networks Info -->
+    <div class="allowed-networks">
+      <h6>Allowed Networks</h6>
+      <ul id="allowed-networks-list">
+        <li>Loading...</li>
+      </ul>
+    </div>
+    
+    <!-- Action Buttons -->
+    <div class="d-grid gap-2">
+      <button id="check-again-btn" class="btn btn-primary btn-lg">
+        <span id="btn-text">Check Again</span>
+        <span id="btn-spinner" class="spinner-border spinner-border-sm ms-2 d-none" role="status">
+          <span class="visually-hidden">Checking...</span>
+        </span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const networkIcon = document.getElementById('network-icon');
+const networkName = document.getElementById('network-name');
+const networkStatus = document.getElementById('network-status');
+const checkAgainBtn = document.getElementById('check-again-btn');
+const allowedNetworksList = document.getElementById('allowed-networks-list');
+const btnText = document.getElementById('btn-text');
+const btnSpinner = document.getElementById('btn-spinner');
+
+let checkInterval = null;
+
+async function checkNetwork() {
+  btnText.textContent = 'Checking...';
+  btnSpinner.classList.remove('d-none');
+  checkAgainBtn.disabled = true;
+  
+  networkIcon.setAttribute('class', 'network-icon checking');
+  networkName.textContent = 'Checking network...';
+  networkStatus.textContent = 'Please wait';
+
+  try {
+    const response = await fetch('/api/network/check', {
+      method: 'GET',
+      cache: 'no-cache',
+      signal: AbortSignal.timeout(5000),
+    });
+    
+    if (!response.ok) {
+      throw new Error('Failed to check network');
+    }
+    
+    const data = await response.json();
+    displayNetworkInfo(data);
+    
+    // If connected to allowed network, redirect to main page
+    if (data.isAllowed) {
+      networkStatus.textContent = 'Redirecting to main page...';
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 1500);
+    }
+  } catch (error) {
+    console.error('Network check failed:', error);
+    networkIcon.setAttribute('class', 'network-icon disconnected');
+    networkName.textContent = 'Check Failed';
+    networkStatus.textContent = 'Unable to determine network status';
+  } finally {
+    btnText.textContent = 'Check Again';
+    btnSpinner.classList.add('d-none');
+    checkAgainBtn.disabled = false;
+  }
+}
+
+fu// Update allowed networks list
+  if (data.allowedNetworks && data.allowedNetworks.length > 0) {
+    allowedNetworksList.innerHTML = data.allowedNetworks
+      .map(network => `<li>${network}</li>`)
+      .join('');
+  } else {
+    allowedNetworksList.innerHTML = '<li class="text-warning">No networks configured</li>';
+  }
+  
+  if (data.connected && data.networkName) {
+    networkName.textContent = data.networkName;
+    
+    if (data.isAllowed) {
+      networkIcon.setAttribute('class', 'network-icon connected');
+      networkStatus.textContent = 'Connected to allowed network ✓';
+    } else {
+      networkIcon.setAttribute('class', 'network-icon disconnected');
+      const networksText = data.allowedNetworks && data.allowedNetworks.length > 0
+        ? data.allowedNetworks.join(' or ')
+        : 'an allowed network';
+      networkStatus.textContent = `Wrong network - Please connect to ${networksText}`
+      networkStatus.textContent = 'Wrong network - Please connect to Dobby or Pumpkinpie';
+    }
+  } else {
+    networkIcon.setAttribute('class', 'network-icon disconnected');
+    networkName.textContent = 'No Network';
+    networkStatus.textContent = 'Not connected to any WiFi network';
+  }
+}
+
+// Check network on page load
+checkNetwork();
+
+// Auto-check every 5 seconds
+checkInterval = setInterval(checkNetwork, 5000);
+
+// Manual check button
+checkAgainBtn.addEventListener('click', checkNetwork);
+
+// Cleanup on page unload
+window.addEventListener('beforeunload', () => {
+  if (checkInterval) {
+    clearInterval(checkInterval);
+  }
+});
+</script>
+
+<script src="lib/bootstrap.bundle.min.js"></script>
+
+</body>
+</html>

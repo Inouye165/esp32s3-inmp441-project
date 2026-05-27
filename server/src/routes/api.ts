@@ -7,6 +7,7 @@ import { audioIngest } from '../services/audioIngest';
 import { audioIngestClassic } from '../services/audioIngestClassic';
 import { fetchBoardInfo } from '../services/esp32Service';
 import { moduleRegistry } from '../services/moduleRegistry';
+import { checkNetworkConnection } from '../services/networkChecker';
 
 // ─── Multer setup for module image uploads ────────────────────────────────────
 
@@ -62,6 +63,13 @@ router.get('/health', (_req: Request, res: Response) => {
     uptime_s: Math.round(process.uptime()),
     ingest: audioIngest.getStatus(),
   });
+});
+
+// ─── /api/network/check — Check if connected to allowed WiFi network ─────────
+
+router.get('/network/check', async (_req: Request, res: Response) => {
+  const networkInfo = await checkNetworkConnection();
+  res.json(networkInfo);
 });
 
 // ─── /api/config — ESP32 IP / port (used only for /proxy/info) ───────────────
