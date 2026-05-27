@@ -1,7 +1,56 @@
 ﻿import { Router, Request, Response } from 'express';
+import fs from 'fs';
+import path from 'path';
+import multer from 'multer';
 import { config, runtimeConfig } from '../config';
 import { audioIngest } from '../services/audioIngest';
+import { audioIngestClassic } from '../services/audioIngestClassic';
 import { fetchBoardInfo } from '../services/esp32Service';
+import { moduleRegistry } from '../services/moduleRegistry';
+
+// ─── Multer setup for module image uploads ────────────────────────────────────
+
+const UPLOADS_DIR = path.join(__dirname, '../../public/uploads');
+
+// Ensure directory exists at module load time
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  filename: (req, _file, cb) => {
+    const ext = path.extname(_file.originalname).toLowerCase() || '.jpg';
+    cb(null, `${req.params.id}${ext}`);
+  },
+});
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (allowed.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only image files (jpg, png, gif, webp) are allowed'));
+    }
+  },
+});
+
+// Only allow private (RFC 1918 + link-local) IP addresses to prevent SSRF
+function isPrivateIp(ip: string): boolean {
+  const parts = ip.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) return false;
+  return (
+    parts[0] === 10 ||
+    parts[0] === 127 ||
+    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+    (parts[0] === 192 && parts[1] === 168) ||
+    (parts[0] === 169 && parts[1] === 254)
+  );
+}
 
 const router = Router();
 
@@ -115,6 +164,164 @@ router.get('/stream/live-samples', (_req: Request, res: Response) => {
     audioIngest.off('live-samples', onSamples);
     res.end();
   });
+});
+
+// ─── /api/stream2/* — Unit 2 (classic ESP32) live PCM receiver ───────────────
+
+router.get('/stream2/status', (_req: Request, res: Response) => {
+  res.json(audioIngestClassic.getStatus());
+});
+
+router.post('/stream2/listener', async (req: Request, res: Response) => {
+  if (!audioIngestClassic.isEnabled()) {
+    res.status(503).json({
+      error: 'Unit 2 ingest disabled — set STREAM_INGEST2_ENABLED=true and restart',
+    });
+    return;
+  }
+  const enabled = Boolean((req.body as { enabled?: unknown })?.enabled);
+  if (enabled) {
+    audioIngestClassic.start();
+  } else {
+    await audioIngestClassic.stop();
+  }
+  res.json(audioIngestClassic.getStatus());
+});
+
+// SSE live-sample stream for unit 2 waveform
+router.get('/stream2/live-samples', (_req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  send('hello', { port: config.ingest2.port, sample_rate: audioIngestClassic.getStatus().sample_rate });
+  const seed = audioIngestClassic.getRecentDbSamples();
+  if (seed.length > 0) send('samples', seed);
+
+  const onSamples = (samples: unknown) => send('samples', samples);
+  audioIngestClassic.on('live-samples', onSamples);
+
+  const keepAlive = setInterval(() => res.write(': ping\n\n'), 15000);
+  _req.on('close', () => {
+    clearInterval(keepAlive);
+    audioIngestClassic.off('live-samples', onSamples);
+    res.end();
+  });
+});
+
+// ─── /api/modules — module registry ─────────────────────────────────────────
+
+router.get('/modules', (_req: Request, res: Response) => {
+  res.json(moduleRegistry.getAll());
+});
+
+router.put('/modules/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { ip, port, name } = req.body as { ip?: unknown; port?: unknown; name?: unknown };
+
+  if (ip !== undefined && (typeof ip !== 'string' || !/^(\d{1,3}\.){3}\d{1,3}$/.test(ip as string))) {
+    res.status(400).json({ error: 'ip must be a valid IPv4 address' });
+    return;
+  }
+  if (port !== undefined) {
+    const portNum = Number(port);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      res.status(400).json({ error: 'port must be an integer 1–65535' });
+      return;
+    }
+  }
+
+  const updated = moduleRegistry.update(id, {
+    ...(ip !== undefined ? { ip: ip as string } : {}),
+    ...(port !== undefined ? { port: Number(port) } : {}),
+    ...(name !== undefined && typeof name === 'string' ? { name } : {}),
+  });
+  if (!updated) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  res.json(updated);
+});
+
+router.post(
+  '/modules/:id/image',
+  upload.single('image'),
+  (req: Request, res: Response) => {
+    const { id } = req.params;
+    // req.file is injected by multer middleware (@types/multer augments Express.Request)
+    const file = (req as Request & { file?: Express.Multer.File }).file;
+    if (!file) {
+      res.status(400).json({ error: 'no image file in request (field name: image)' });
+      return;
+    }
+    const updated = moduleRegistry.setImage(id, file.filename);
+    if (!updated) {
+      // Module not found — clean up the orphaned file
+      fs.unlink(file.path, () => undefined);
+      res.status(404).json({ error: 'module not found' });
+      return;
+    }
+    res.json({ ok: true, imageFile: file.filename });
+  },
+);
+
+router.delete('/modules/:id/image', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const mod = moduleRegistry.get(id);
+  if (!mod) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  if (mod.imageFile) {
+    const filePath = path.join(UPLOADS_DIR, mod.imageFile);
+    fs.unlink(filePath, () => undefined);
+    moduleRegistry.clearImage(id);
+  }
+  res.json({ ok: true });
+});
+
+// ─── /api/modules/:id/led/:command — proxy LED command to device ─────────────
+
+router.post('/modules/:id/led/:command', async (req: Request, res: Response) => {
+  const { id, command } = req.params;
+  const allowedCmds = ['on', 'off', 'blink'];
+  if (!allowedCmds.includes(command)) {
+    res.status(400).json({ error: 'command must be on, off, or blink' });
+    return;
+  }
+
+  const mod = moduleRegistry.get(id);
+  if (!mod) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  if (!mod.hasLed) {
+    res.status(400).json({ error: 'this module has no LED control' });
+    return;
+  }
+  if (!mod.ip) {
+    res.status(503).json({ error: 'device IP not configured — save an IP first' });
+    return;
+  }
+  if (!isPrivateIp(mod.ip)) {
+    res.status(403).json({ error: 'device IP must be a private/local address' });
+    return;
+  }
+
+  try {
+    const url = `http://${mod.ip}:${mod.port}/led/${command}`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    res.json({ ok: response.ok, command, module: id });
+  } catch (err) {
+    res.status(503).json({ error: `Device unreachable: ${(err as Error).message}` });
+  }
 });
 
 export default router;

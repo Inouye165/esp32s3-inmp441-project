@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>ESP32-S3 INMP441 Streamer</title>
+  <title>ESP32 INMP441 Streamer</title>
   <link rel="stylesheet" href="lib/bootstrap.min.css" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -11,87 +11,266 @@
 
 <nav class="navbar navbar-dark bg-dark border-bottom border-secondary px-3">
   <span class="navbar-brand fw-semibold">
-    <span class="text-success">&#9679;</span>&nbsp;ESP32-S3 INMP441 Streamer
+    <span class="text-success">&#9679;</span>&nbsp;ESP32 INMP441 Streamer
   </span>
-  <div class="d-flex gap-2 align-items-center">
-    <span class="text-secondary small">Board:</span>
+  <div class="d-flex gap-3 align-items-center">
+    <span class="text-secondary small">Unit 1 (S3):</span>
     <span id="board-status" class="badge bg-secondary">unknown</span>
-    <span class="text-secondary small ms-3">Ingest:</span>
+    <span class="text-secondary small">Ingest 1:</span>
     <span id="ingest-status" class="badge bg-secondary">unknown</span>
+    <span class="text-secondary small ms-2">Unit 2 (Classic):</span>
+    <span id="ingest2-status" class="badge bg-secondary">unknown</span>
   </div>
 </nav>
 
-<div class="container-fluid py-3 px-4">
+<div class="main-tab-bar bg-dark border-bottom border-secondary px-3">
+  <ul class="nav nav-tabs border-0" id="main-tabs" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link active" id="dashboard-tab"
+              data-bs-toggle="tab" data-bs-target="#tab-dashboard"
+              type="button" role="tab" aria-selected="true">Dashboard</button>
+    </li>
+    <li class="nav-item" role="presentation">
+      <button class="nav-link" id="modules-tab"
+              data-bs-toggle="tab" data-bs-target="#tab-modules"
+              type="button" role="tab" aria-selected="false">Modules</button>
+    </li>
+  </ul>
+</div>
 
-  <!-- ESP32 connection -->
-  <div class="card border-secondary mb-3">
-    <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
-      <label class="text-secondary small mb-0">ESP32 IP</label>
-      <input id="esp32-ip-input" type="text" class="form-control form-control-sm w-auto" placeholder="192.168.1.50" />
-      <label class="text-secondary small mb-0 ms-2">Port</label>
-      <input id="esp32-port-input" type="number" class="form-control form-control-sm w-auto" value="80" />
-      <button id="save-config-btn" class="btn btn-sm btn-primary">Save</button>
-      <span id="config-msg" class="text-secondary small ms-2"></span>
+<div class="tab-content">
+
+  <!-- ═══ DASHBOARD TAB ═══════════════════════════════════════════════════ -->
+  <div class="tab-pane fade show active" id="tab-dashboard" role="tabpanel">
+    <div class="container-fluid py-3 px-4">
+
+      <h6 class="text-secondary text-uppercase small mb-2 mt-1">Unit 1 — ESP32-S3-WROOM-1 (TCP :8001)</h6>
+
+      <div class="card border-secondary mb-3">
+        <div class="card-body py-2 d-flex align-items-center gap-2 flex-wrap">
+          <label class="text-secondary small mb-0">ESP32 IP</label>
+          <input id="esp32-ip-input" type="text" class="form-control form-control-sm w-auto" placeholder="192.168.1.50" />
+          <label class="text-secondary small mb-0 ms-2">Port</label>
+          <input id="esp32-port-input" type="number" class="form-control form-control-sm w-auto" value="80" />
+          <button id="save-config-btn" class="btn btn-sm btn-primary">Save</button>
+          <span id="config-msg" class="text-secondary small ms-2"></span>
+        </div>
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <div class="card border-secondary h-100">
+            <div class="card-header py-2">Board Info — Unit 1</div>
+            <div class="card-body small">
+              <div>Chip: <span id="info-chip" class="text-info">—</span></div>
+              <div>Firmware: <span id="info-fw" class="text-info">—</span></div>
+              <div>IP: <span id="info-ip" class="text-info">—</span></div>
+              <div>RSSI: <span id="info-rssi" class="text-info">—</span> dBm</div>
+              <div>Streaming: <span id="info-streaming" class="text-info">—</span></div>
+              <div>Sample rate: <span id="info-sr" class="text-info">—</span> Hz</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card border-secondary h-100">
+            <div class="card-header py-2">Current Level — Unit 1</div>
+            <div class="card-body text-center">
+              <div class="display-5 fw-bold" id="level-value">—</div>
+              <div class="text-secondary small">dBFS (200 ms window)</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card border-secondary h-100">
+            <div class="card-header py-2">Stream Listener — Unit 1</div>
+            <div class="card-body">
+              <div class="d-grid gap-2">
+                <button id="start-btn" class="btn btn-success btn-sm">Start listener</button>
+                <button id="stop-btn" class="btn btn-outline-danger btn-sm">Stop listener</button>
+              </div>
+              <div class="small text-secondary mt-2">
+                Port: <span id="ingest-port">—</span><br />
+                Client: <span id="ingest-client">none</span><br />
+                Bytes: <span id="ingest-bytes">0</span>
+              </div>
+              <div id="stream-msg" class="small text-warning mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="card border-secondary">
+            <div class="card-header py-2">Live Waveform — Unit 1 (ESP32-S3)</div>
+            <div class="card-body">
+              <canvas id="wave-chart" height="100"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h6 class="text-secondary text-uppercase small mb-2 mt-3">Unit 2 — Classic ESP32-D0WD DevKit V1 (TCP :8002)</h6>
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="card border-secondary h-100">
+            <div class="card-header py-2">Stream Status — Unit 2</div>
+            <div class="card-body small">
+              <div>Status: <span id="u2-status" class="badge bg-secondary">unknown</span></div>
+              <div class="mt-1">Port: <span id="u2-port" class="text-info">—</span></div>
+              <div>Client: <span id="u2-client" class="text-info">none</span></div>
+              <div>Bytes: <span id="u2-bytes" class="text-info">0</span></div>
+              <div>Sample rate: <span id="u2-sr" class="text-info">—</span> Hz</div>
+              <div class="mt-2 d-grid gap-2">
+                <button id="u2-start-btn" class="btn btn-success btn-sm">Start listener</button>
+                <button id="u2-stop-btn"  class="btn btn-outline-danger btn-sm">Stop listener</button>
+              </div>
+              <div id="u2-msg" class="small text-warning mt-2"></div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card border-secondary h-100">
+            <div class="card-header py-2">Current Level — Unit 2</div>
+            <div class="card-body text-center">
+              <div class="display-5 fw-bold" id="u2-level-value">—</div>
+              <div class="text-secondary small">dBFS (200 ms window)</div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card border-secondary h-100">
+            <div class="card-header py-2">Wiring — Classic ESP32 / INMP441</div>
+            <div class="card-body small font-monospace">
+              <table class="table table-sm table-dark mb-0">
+                <thead><tr><th>INMP441</th><th>GPIO</th></tr></thead>
+                <tbody>
+                  <tr><td>SCK / BCLK</td><td class="text-success">26</td></tr>
+                  <tr><td>WS / LRCLK</td><td class="text-success">25</td></tr>
+                  <tr><td>SD / DOUT</td><td class="text-success">34</td></tr>
+                  <tr><td>L/R</td><td class="text-warning">GND (Left ch.)</td></tr>
+                  <tr><td>VDD</td><td>3.3 V</td></tr>
+                  <tr><td>GND</td><td>GND</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div class="card border-secondary">
+            <div class="card-header py-2">Live Waveform — Unit 2 (Classic ESP32)</div>
+            <div class="card-body">
+              <canvas id="wave-chart2" height="100"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
 
-  <div class="row g-3">
-    <!-- Board info -->
-    <div class="col-md-4">
-      <div class="card border-secondary h-100">
-        <div class="card-header py-2">Board Info</div>
-        <div class="card-body small">
-          <div>Chip: <span id="info-chip" class="text-info">—</span></div>
-          <div>Firmware: <span id="info-fw" class="text-info">—</span></div>
-          <div>IP: <span id="info-ip" class="text-info">—</span></div>
-          <div>RSSI: <span id="info-rssi" class="text-info">—</span> dBm</div>
-          <div>Streaming: <span id="info-streaming" class="text-info">—</span></div>
-          <div>Sample rate: <span id="info-sr" class="text-info">—</span> Hz</div>
+  <!-- ═══ MODULES TAB ═════════════════════════════════════════════════════ -->
+  <div class="tab-pane fade" id="tab-modules" role="tabpanel">
+    <div class="container-fluid py-4 px-4">
+      <div class="d-flex align-items-center mb-4">
+        <h5 class="mb-0 text-light fw-semibold">Modules</h5>
+        <span class="text-secondary ms-2 small" id="modules-count"></span>
+      </div>
+      <div class="row g-3" id="modules-grid">
+        <div class="col-12 text-center text-secondary py-5">
+          <div class="spinner-border spinner-border-sm me-2"></div>Loading modules…
         </div>
       </div>
     </div>
+  </div>
 
-    <!-- Level -->
-    <div class="col-md-4">
-      <div class="card border-secondary h-100">
-        <div class="card-header py-2">Current Level</div>
-        <div class="card-body text-center">
-          <div class="display-5 fw-bold" id="level-value">—</div>
-          <div class="text-secondary small">dBFS (RMS, 1 s window)</div>
-        </div>
-      </div>
-    </div>
+</div>
 
-    <!-- Stream controls -->
-    <div class="col-md-4">
-      <div class="card border-secondary h-100">
-        <div class="card-header py-2">Stream Listener</div>
-        <div class="card-body">
-          <div class="d-grid gap-2">
-            <button id="start-btn" class="btn btn-success btn-sm">Start listener</button>
-            <button id="stop-btn" class="btn btn-outline-danger btn-sm">Stop listener</button>
+
+<!-- ═══ MODULE DETAIL MODAL ═══════════════════════════════════════════════ -->
+<div class="modal fade" id="moduleModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-centered">
+    <div class="modal-content module-modal-content">
+
+      <div class="modal-header border-secondary">
+        <div class="flex-fill min-w-0">
+          <div class="d-flex align-items-center gap-2 flex-wrap">
+            <h5 class="modal-title mb-0 text-truncate" id="modal-mod-name">Module</h5>
+            <span class="badge" id="modal-mod-status"></span>
           </div>
-          <div class="small text-secondary mt-2">
-            Port: <span id="ingest-port">—</span><br />
-            Client: <span id="ingest-client">none</span><br />
-            Bytes: <span id="ingest-bytes">0</span>
-          </div>
-          <div id="stream-msg" class="small text-warning mt-2"></div>
+          <div class="text-secondary small mt-1" id="modal-mod-type"></div>
         </div>
+        <button type="button" class="btn-close btn-close-white ms-3 flex-shrink-0"
+                data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
-    </div>
 
-    <!-- Waveform -->
-    <div class="col-12">
-      <div class="card border-secondary">
-        <div class="card-header py-2">Live Waveform (dBFS)</div>
-        <div class="card-body">
-          <canvas id="wave-chart" height="120"></canvas>
+      <div class="modal-body">
+        <div class="row g-4">
+
+          <div class="col-md-5">
+            <div class="module-img-zone" id="modal-img-zone"
+                 title="Click or drag &amp; drop an image to upload"></div>
+
+            <input type="file" id="modal-img-file"
+                   accept="image/jpeg,image/png,image/gif,image/webp"
+                   class="d-none" />
+
+            <div class="mt-2 d-grid gap-2">
+              <button class="btn btn-outline-secondary btn-sm" id="modal-upload-btn">
+                Upload / Change Photo
+              </button>
+              <button class="btn btn-outline-danger btn-sm d-none" id="modal-remove-img-btn">
+                Remove Photo
+              </button>
+            </div>
+            <div class="small mt-2" id="modal-img-msg"></div>
+          </div>
+
+          <div class="col-md-7">
+
+            <div class="mb-3">
+              <label class="form-label text-secondary small text-uppercase fw-semibold ls-wide">
+                Device Network
+              </label>
+              <div class="input-group input-group-sm">
+                <span class="input-group-text">IP</span>
+                <input type="text" class="form-control"
+                       id="modal-ip-input" placeholder="192.168.x.x" />
+                <span class="input-group-text">Port</span>
+                <input type="number" class="form-control"
+                       id="modal-port-input" value="80" min="1" max="65535"
+                       style="max-width:80px" />
+                <button class="btn btn-primary btn-sm" id="modal-save-ip-btn">Save</button>
+              </div>
+              <div class="small mt-1" id="modal-ip-msg"></div>
+            </div>
+
+            <div id="modal-led-section" class="mb-3 d-none">
+              <label class="form-label text-secondary small text-uppercase fw-semibold ls-wide">
+                LED Control
+              </label>
+              <div class="d-flex gap-2">
+                <button class="btn btn-success btn-sm flex-fill" id="modal-led-on">ON</button>
+                <button class="btn btn-secondary btn-sm flex-fill" id="modal-led-off">OFF</button>
+                <button class="btn btn-warning btn-sm flex-fill text-dark fw-bold" id="modal-led-blink">BLINK</button>
+              </div>
+              <div class="small mt-2" id="modal-led-msg"></div>
+            </div>
+
+            <div id="modal-open-device-wrap" class="d-none">
+              <div class="pt-3 border-top border-secondary">
+                <a class="btn btn-outline-info btn-sm w-100"
+                   id="modal-open-device" href="#" target="_blank" rel="noopener noreferrer">
+                  Open Device Page ↗
+                </a>
+              </div>
+            </div>
+
+          </div>
         </div>
       </div>
     </div>
   </div>
 </div>
+
 
 <script src="lib/bootstrap.bundle.min.js"></script>
 <script src="lib/chart.umd.min.js"></script>
