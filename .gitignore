@@ -4,6 +4,7 @@ firmware/.pioenvs/
 
 # ── Firmware secrets (WiFi credentials — never commit the real file) ─────────
 firmware/include/secrets.h
+firmware/src_esp32classic/secrets_esp32.h
 
 # ── Node / Server ────────────────────────────────────────────────────────────
 server/node_modules/
@@ -11,6 +12,9 @@ server/dist/
 server/.env            # legacy env file (kept ignored for local compatibility)
 server/.env.local      # real local env — use .env.local.example as template
 server/recordings/
+server/data/           # module registry (runtime-generated)
+server/public/uploads/ # module photos (user-uploaded)
+!server/public/uploads/.gitkeep
 
 # ── TypeScript build artefacts ───────────────────────────────────────────────
 *.js.map

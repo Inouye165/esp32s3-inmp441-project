@@ -8,6 +8,7 @@ dotenv.config();
 const archiveChunkMs = parseInt(process.env.ARCHIVE_CHUNK_MS ?? '2000', 10);
 
 const ingestEnabled = process.env.STREAM_INGEST_ENABLED === 'true';
+const ingest2Enabled = process.env.STREAM_INGEST2_ENABLED === 'true';
 
 export const config = {
   port: parseInt(process.env.PORT ?? '3000', 10),
@@ -30,6 +31,11 @@ export const config = {
   ingest: {
     enabled: ingestEnabled,
     port: parseInt(process.env.STREAM_INGEST_PORT ?? '8001', 10),
+  },
+  // Unit 2 — classic ESP32 (no archive, live waveform only)
+  ingest2: {
+    enabled: ingest2Enabled,
+    port: parseInt(process.env.STREAM_INGEST2_PORT ?? '8002', 10),
   },
 } as const;
 
