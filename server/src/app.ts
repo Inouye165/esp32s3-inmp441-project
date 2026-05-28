@@ -10,7 +10,10 @@ export function createApp() {
   app.use(cors());
   app.use(express.json());
 
-  // Serve static frontend files
+  // Serve uploads directory for module images
+  app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+
+  // Serve original static files (HTML audio streaming dashboard)
   app.use(express.static(path.join(__dirname, '../public')));
 
   // API routes
@@ -19,11 +22,6 @@ export function createApp() {
   // 404 fallback for unknown API routes
   app.use('/api', (_req, res) => {
     res.status(404).json({ error: 'API route not found' });
-  });
-
-  // Serve the SPA for all other paths
-  app.get('*', (_req, res) => {
-    res.sendFile(path.join(__dirname, '../public/index.html'));
   });
 
   app.use(errorHandler);

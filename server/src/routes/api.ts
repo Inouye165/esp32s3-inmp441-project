@@ -230,6 +230,16 @@ router.get('/modules', (_req: Request, res: Response) => {
   res.json(moduleRegistry.getAll());
 });
 
+router.get('/modules/:id', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const mod = moduleRegistry.get(id);
+  if (!mod) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  res.json(mod);
+});
+
 router.put('/modules/:id', (req: Request, res: Response) => {
   const { id } = req.params;
   const { ip, port, name } = req.body as { ip?: unknown; port?: unknown; name?: unknown };

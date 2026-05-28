@@ -12,6 +12,32 @@ display, dBFS computation, and future analysis live on the server.
 └─────────────┘          └──────────┘                └─────────────────┘
 ```
 
+## 🚀 Quick Commands
+
+```bash
+# Start the server (development mode with hot reload)
+cd server
+npm run dev
+
+# Server runs at: http://localhost:3000
+
+# Restart server (if already running)
+# Windows PowerShell:
+netstat -ano | findstr :3000              # Find PID
+taskkill /PID <PID> /F                    # Kill process (replace <PID>)
+cd c:\Users\inouy\electronic_projects\esp\esp32s3-inmp441-project\server
+npm run dev                               # Start again
+
+# Flash ESP32 firmware
+cd firmware
+pio run --target upload                   # Upload to connected ESP32
+pio device monitor                        # View serial output
+
+# Run tests
+cd server
+npm test                                  # Run all Jest tests
+```
+
 ### Streaming protocol
 
 | Field | Value |
@@ -140,13 +166,30 @@ PORT=3000
 
 **Development mode** (with hot reload):
 ```bash
+cd server
 npm run dev
 ```
 
 **Production mode**:
 ```bash
+cd server
 npm run build    # Compile TypeScript to dist/
 npm start        # Run compiled server
+```
+
+**Restart the server** (when already running):
+```bash
+# Windows PowerShell:
+# 1. Find and kill process using port 3000
+netstat -ano | findstr :3000    # Note the PID (last column)
+taskkill /PID <PID> /F          # Replace <PID> with actual number
+
+# 2. Start server again
+cd c:\Users\inouy\electronic_projects\esp\esp32s3-inmp441-project\server
+npm run dev
+
+# Quick one-liner (stops all node processes, use with caution):
+Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force ; cd server ; npm run dev
 ```
 
 #### Accessing the Dashboard
@@ -185,17 +228,54 @@ All responses include `Access-Control-Allow-Origin: *`.
 
 The dashboard includes a **Modules** tab for managing multiple ESP devices from a unified interface:
 
-- **Visual card grid** — each module displays a thumbnail (upload via drag-and-drop or file picker)
+- **Visual card grid** — each module displays:
+  - Module name and type (ESP8266, ESP32, ESP32-S3)
+  - Unique identifier (e.g., `esp8266-001`, `esp32s3-001`)
+  - Thumbnail photo (upload via drag-and-drop or file picker)
+  - LED capability badge
+  - IP address badge
+  
 - **Module registry** — JSON-persisted at `server/data/modules.json`, pre-seeded with:
-  - ESP8266 NodeMCU v2 (LED control enabled)
-  - ESP32-S3 Unit 1 (audio streaming)
-  - ESP32 Classic Unit 2 (audio streaming)
-- **Device configuration** — set IP address and port for each module
-- **LED control proxy** — send ON/OFF/BLINK commands to modules with LED capability
-- **Security** — LED proxy validates private IP addresses only (SSRF protection)
-- **Image management** — upload board photos (≤5 MB, JPEG/PNG/GIF/WebP), served from `public/uploads/`
+  - `esp8266-001`: NodeMCU v2 (ESP-12E) with LED control
+  - `esp32s3-001`: ESP32-S3-WROOM-1 audio streaming unit
+  - `esp32-001`: ESP32-D0WD Classic audio streaming unit
+  
+- **Quick modal view** — Click a module card to open:
+  - Module identity (unique ID, model name, MAC address, chip ID)
+  - Image upload/management
+  - IP address and port configuration
+  - LED controls (when available)
+  - Collapsible specifications preview
+  - **"View Full Module Details →"** button to open comprehensive view
+  
+- **Full-page detail view** — Click "View Full Module Details" for:
+  - **Large module photo** with SVG placeholder fallback
+  - **Complete identity panel**: Unique ID, Model, MAC Address, Chip ID
+  - **Network configuration**: IP and Port display
+  - **LED controls**: ON/OFF/BLINK buttons (when hasLed = true)
+  - **Comprehensive hardware specifications**:
+    - Core specs (CPU, RAM, Flash, GPIO count, peripherals)
+    - Connectivity details (WiFi, Bluetooth, BLE with YES/NO badges)
+    - **Complete GPIO pinout tables** with pin numbers, functions, and warnings
+    - Important notes about boot pins, strapping pins, and voltage requirements
+  - **"Open Device" link**: Direct access to ESP device web interface (when IP configured)
+  - **"Edit Settings" button**: Return to main page for configuration changes
 
-**Usage:** Click any module card to open the detail modal, configure IP/port, upload a photo, and control the device.
+- **Type-specific specifications**:
+  - **ESP8266**: NodeMCU/D1 Mini pinout, WiFi-only (no BT/BLE), boot pin warnings
+  - **ESP32-S3**: Dual-core Xtensa LX7, BLE 5.0, USB OTG, 45 GPIOs, strapping pin notes
+  - **ESP32 Classic**: Dual-core Xtensa LX6, Classic BT + BLE 4.2, Hall sensor, GPIO restrictions
+
+- **Device configuration** — Set IP address and port for each module via modal
+- **LED control proxy** — Send ON/OFF/BLINK commands to modules with LED capability
+- **Security** — LED proxy validates private IP addresses only (SSRF protection)
+- **Image management** — Upload board photos (≤5 MB, JPEG/PNG/GIF/WebP), served from `public/uploads/`
+
+**Usage:**  
+1. Click any module card to open quick modal view
+2. Click **"View Full Module Details →"** for comprehensive specs and pinout diagrams
+3. Use **"Open Device"** button to access the ESP device's native web interface
+4. Use **"Edit Settings"** to configure IP, upload photos, or manage the module
 
 ## Desktop Server API
 
@@ -203,6 +283,8 @@ The dashboard includes a **Modules** tab for managing multiple ESP devices from 
 
 | Method | Path | Description |
 |--------|------|-------------|
+| GET | `/` | Main dashboard (tabbed UI) |
+| GET | `/module?id=<id>` | Full-page module detail view with specs |
 | GET | `/api/health` | Server uptime + ingest status |
 | GET | `/api/config` | Current ESP32 IP/port |
 | POST | `/api/config` | Set ESP32 IP/port (`{ "ip": "x.x.x.x", "port": 80 }`) |
@@ -216,6 +298,7 @@ The dashboard includes a **Modules** tab for managing multiple ESP devices from 
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/modules` | List all registered modules |
+| GET | `/api/modules/:id` | Get single module details |
 | PUT | `/api/modules/:id` | Update module config (`{ "ip": "x.x.x.x", "port": 80, "name": "..." }`) |
 | POST | `/api/modules/:id/image` | Upload module photo (multipart form, field: `image`) |
 | DELETE | `/api/modules/:id/image` | Remove module photo |

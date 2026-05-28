@@ -162,11 +162,10 @@ async function checkNetwork() {
     const response = await fetch('/api/network/check', {
       method: 'GET',
       cache: 'no-cache',
-      signal: AbortSignal.timeout(5000),
     });
     
     if (!response.ok) {
-      throw new Error('Failed to check network');
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     
     const data = await response.json();
@@ -183,7 +182,7 @@ async function checkNetwork() {
     console.error('Network check failed:', error);
     networkIcon.setAttribute('class', 'network-icon disconnected');
     networkName.textContent = 'Check Failed';
-    networkStatus.textContent = 'Unable to determine network status';
+    networkStatus.textContent = `Error: ${error.message || 'Unable to determine network status'}`;
   } finally {
     btnText.textContent = 'Check Again';
     btnSpinner.classList.add('d-none');
@@ -191,7 +190,8 @@ async function checkNetwork() {
   }
 }
 
-fu// Update allowed networks list
+function displayNetworkInfo(data) {
+  // Update allowed networks list
   if (data.allowedNetworks && data.allowedNetworks.length > 0) {
     allowedNetworksList.innerHTML = data.allowedNetworks
       .map(network => `<li>${network}</li>`)
@@ -211,8 +211,7 @@ fu// Update allowed networks list
       const networksText = data.allowedNetworks && data.allowedNetworks.length > 0
         ? data.allowedNetworks.join(' or ')
         : 'an allowed network';
-      networkStatus.textContent = `Wrong network - Please connect to ${networksText}`
-      networkStatus.textContent = 'Wrong network - Please connect to Dobby or Pumpkinpie';
+      networkStatus.textContent = `Wrong network - Please connect to ${networksText}`;
     }
   } else {
     networkIcon.setAttribute('class', 'network-icon disconnected');

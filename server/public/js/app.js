@@ -18,43 +18,44 @@ async function checkNetworkConnectivity() {
     const r = await fetch('/api/network/check', {
       method: 'GET',
       cache: 'no-cache',
-      signal: AbortSignal.timeout(3000),
+      signal: AbortSignal.timeout(20000),
     });
     
-    if (r.ok) {
-      const data = await r.json();
-      console.log('[Network Check] Response:', data);
-      
-      // Update allowed networks display
-      if (data.allowedNetworks && data.allowedNetworks.length > 0) {
-        allowedNetworksText.textContent = data.allowedNetworks.join(' or ');
-      }
-      
-      // Update current network display
-      if (data.connected && data.networkName) {
-        currentNetworkText.textContent = `Current network: ${data.networkName}`;
-      } else {
-        currentNetworkText.textContent = 'No WiFi connection detected';
-      }
-      
-      // Only allow access if on approved network
-      if (data.isAllowed) {
-        console.log('[Network Check] ✓ Network allowed - enabling interface');
-        setNetworkConnected(true);
-        return true;
-      } else {
-        console.log('[Network Check] ✗ Network NOT allowed - showing overlay');
-        setNetworkConnected(false);
-        return false;
-      }
+    if (!r.ok) {
+      console.error('[Network Check] HTTP error:', r.status, r.statusText);
+      throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     }
     
-    console.log('[Network Check] Request failed');
-    setNetworkConnected(false);
-    return false;
+    const data = await r.json();
+    console.log('[Network Check] Response:', data);
+      
+    // Update allowed networks display
+    if (data.allowedNetworks && data.allowedNetworks.length > 0) {
+      allowedNetworksText.textContent = data.allowedNetworks.join(' or ');
+    }
+    
+    // Update current network display
+    if (data.connected && data.networkName) {
+      currentNetworkText.textContent = `Current network: ${data.networkName}`;
+    } else {
+      currentNetworkText.textContent = 'No WiFi connection detected';
+    }
+    
+    // Only allow access if on approved network
+    if (data.isAllowed) {
+      console.log('[Network Check] ✓ Network allowed - enabling interface');
+      setNetworkConnected(true);
+      return true;
+    } else {
+      console.log('[Network Check] ✗ Network NOT allowed - showing overlay');
+      setNetworkConnected(false);
+      return false;
+    }
   } catch (err) {
-    console.error('[Network Check] Error:', err);
-    currentNetworkText.textContent = 'Unable to check network status';
+    console.error('[Network Check] Full error object:', err);
+    const errorMsg = err?.message || err?.toString() || 'Unknown error';
+    console.error('[Network Check] Error message:', errorMsg);
+    currentNetworkText.textContent = `Error: ${errorMsg}`;
     setNetworkConnected(false);
     return false;
   }
@@ -369,30 +370,10 @@ function connectLiveSamples2() {
 const modEls = {
   grid:           document.getElementById('modules-grid'),
   count:          document.getElementById('modules-count'),
-  modal:          null,                              // bootstrap.Modal instance
-  modalName:      document.getElementById('modal-mod-name'),
-  modalType:      document.getElementById('modal-mod-type'),
-  modalStatus:    document.getElementById('modal-mod-status'),
-  modalImgZone:   document.getElementById('modal-img-zone'),
-  modalImgFile:   document.getElementById('modal-img-file'),
-  modalImgMsg:    document.getElementById('modal-img-msg'),
-  modalUploadBtn: document.getElementById('modal-upload-btn'),
-  modalRemoveBtn: document.getElementById('modal-remove-img-btn'),
-  modalIpInput:   document.getElementById('modal-ip-input'),
-  modalPortInput: document.getElementById('modal-port-input'),
-  modalSaveIpBtn: document.getElementById('modal-save-ip-btn'),
-  modalIpMsg:     document.getElementById('modal-ip-msg'),
-  modalLedSection: document.getElementById('modal-led-section'),
-  modalLedOn:     document.getElementById('modal-led-on'),
-  modalLedOff:    document.getElementById('modal-led-off'),
-  modalLedBlink:  document.getElementById('modal-led-blink'),
-  modalLedMsg:    document.getElementById('modal-led-msg'),
-  modalOpenWrap:  document.getElementById('modal-open-device-wrap'),
-  modalOpenLink:  document.getElementById('modal-open-device'),
 };
 
 let modules = [];
-let currentModule = null;
+
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({
@@ -451,6 +432,7 @@ function renderModules() {
           <div class="module-info">
             <div class="module-name text-truncate">${escapeHtml(m.name)}</div>
             <div class="module-type text-secondary small text-truncate">${escapeHtml(m.type)}</div>
+            <div class="module-id font-monospace text-info" style="font-size: 0.7rem; margin-top: 0.25rem;">${escapeHtml(m.id)}</div>
             <div class="module-tags mt-2 d-flex flex-wrap gap-1">${tags.join('')}</div>
           </div>
         </button>
@@ -459,7 +441,10 @@ function renderModules() {
   }).join('');
 
   modEls.grid.querySelectorAll('[data-module-id]').forEach(btn => {
-    btn.addEventListener('click', () => openModuleModal(btn.dataset.moduleId));
+    btn.addEventListener('click', () => {
+      const moduleId = btn.dataset.moduleId;
+      window.location.href = `/module?id=${encodeURIComponent(moduleId)}`;
+    });
   });
 }
 
@@ -473,212 +458,6 @@ async function loadModules() {
       `<div class="col-12 text-center text-danger py-5">Failed to load modules: ${escapeHtml(e.message)}</div>`;
   }
 }
-
-function renderModalImage(m) {
-  if (m.imageFile) {
-    modEls.modalImgZone.classList.add('has-image');
-    modEls.modalImgZone.innerHTML = `
-      <img src="/uploads/${encodeURIComponent(m.imageFile)}?t=${Date.now()}"
-           alt="${escapeHtml(m.name)}" />`;
-    modEls.modalRemoveBtn.classList.remove('d-none');
-  } else {
-    modEls.modalImgZone.classList.remove('has-image');
-    modEls.modalImgZone.innerHTML = `
-      <div class="module-img-empty">
-        <div class="module-img-empty-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" width="42" height="42"
-               fill="currentColor" viewBox="0 0 16 16">
-            <path d="M6.002 5.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0"/>
-            <path d="M2.002 1a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V3a2 2 0 0 0-2-2zm12 1a1 1 0 0 1 1 1v6.5l-3.777-1.947a.5.5 0 0 0-.577.093l-3.71 3.71-2.66-1.772a.5.5 0 0 0-.63.062L1.002 12V3a1 1 0 0 1 1-1z"/>
-          </svg>
-        </div>
-        <div class="module-img-empty-text">
-          No photo yet<br>
-          <span class="small text-secondary">Click here or use the button below to upload</span>
-        </div>
-      </div>`;
-    modEls.modalRemoveBtn.classList.add('d-none');
-  }
-}
-
-function openModuleModal(id) {
-  const m = modules.find(x => x.id === id);
-  if (!m) return;
-  currentModule = m;
-
-  modEls.modalName.textContent = m.name;
-  modEls.modalType.textContent = m.type;
-  modEls.modalStatus.className = 'badge ' + (m.ip ? 'bg-info text-dark' : 'bg-secondary');
-  modEls.modalStatus.textContent = m.ip ? `${m.ip}:${m.port}` : 'not configured';
-
-  modEls.modalIpInput.value   = m.ip   || '';
-  modEls.modalPortInput.value = m.port || 80;
-  modEls.modalIpMsg.textContent = '';
-  modEls.modalImgMsg.textContent = '';
-  modEls.modalLedMsg.textContent = '';
-
-  renderModalImage(m);
-
-  if (m.hasLed) {
-    modEls.modalLedSection.classList.remove('d-none');
-  } else {
-    modEls.modalLedSection.classList.add('d-none');
-  }
-
-  if (m.ip) {
-    modEls.modalOpenWrap.classList.remove('d-none');
-    modEls.modalOpenLink.href = `http://${m.ip}:${m.port}/`;
-  } else {
-    modEls.modalOpenWrap.classList.add('d-none');
-  }
-
-  if (!modEls.modal) {
-    modEls.modal = new bootstrap.Modal(document.getElementById('moduleModal'));
-  }
-  modEls.modal.show();
-}
-
-// ── Upload handling ─────────────────────────────────────────────────────────
-
-function triggerFilePicker() { modEls.modalImgFile.click(); }
-
-modEls.modalImgZone.addEventListener('click', triggerFilePicker);
-modEls.modalUploadBtn.addEventListener('click', triggerFilePicker);
-
-['dragenter', 'dragover'].forEach(ev => {
-  modEls.modalImgZone.addEventListener(ev, e => {
-    e.preventDefault();
-    modEls.modalImgZone.classList.add('drag-over');
-  });
-});
-['dragleave', 'drop'].forEach(ev => {
-  modEls.modalImgZone.addEventListener(ev, e => {
-    e.preventDefault();
-    modEls.modalImgZone.classList.remove('drag-over');
-  });
-});
-modEls.modalImgZone.addEventListener('drop', e => {
-  const f = e.dataTransfer?.files?.[0];
-  if (f) uploadImage(f);
-});
-
-modEls.modalImgFile.addEventListener('change', e => {
-  const f = e.target.files?.[0];
-  if (f) uploadImage(f);
-  e.target.value = '';
-});
-
-async function uploadImage(file) {
-  if (!currentModule) return;
-  if (!file.type.startsWith('image/')) {
-    modEls.modalImgMsg.innerHTML = '<span class="text-danger">Please choose an image file.</span>';
-    return;
-  }
-  if (file.size > 5 * 1024 * 1024) {
-    modEls.modalImgMsg.innerHTML = '<span class="text-danger">Image must be under 5 MB.</span>';
-    return;
-  }
-  modEls.modalImgMsg.innerHTML = '<span class="text-info">Uploading…</span>';
-
-  const fd = new FormData();
-  fd.append('image', file);
-
-  try {
-    const r = await guardedFetch(`/api/modules/${encodeURIComponent(currentModule.id)}/image`, {
-      method: 'POST',
-      body: fd,
-    });
-    const body = await r.json();
-    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-    modEls.modalImgMsg.innerHTML = '<span class="text-success">Saved.</span>';
-    currentModule.imageFile = body.imageFile;
-    renderModalImage(currentModule);
-    await loadModules();
-  } catch (e) {
-    modEls.modalImgMsg.innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`;
-  }
-}
-
-modEls.modalRemoveBtn.addEventListener('click', async () => {
-  if (!currentModule) return;
-  if (!confirm('Remove this module photo?')) return;
-  modEls.modalImgMsg.innerHTML = '<span class="text-info">Removing…</span>';
-  try {
-    const r = await guardedFetch(`/api/modules/${encodeURIComponent(currentModule.id)}/image`, {
-      method: 'DELETE',
-    });
-    if (!r.ok) {
-      const body = await r.json().catch(() => ({}));
-      throw new Error(body.error || `HTTP ${r.status}`);
-    }
-    modEls.modalImgMsg.innerHTML = '<span class="text-success">Removed.</span>';
-    delete currentModule.imageFile;
-    renderModalImage(currentModule);
-    await loadModules();
-  } catch (e) {
-    modEls.modalImgMsg.innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`;
-  }
-});
-
-// ── IP / port save ──────────────────────────────────────────────────────────
-
-modEls.modalSaveIpBtn.addEventListener('click', async () => {
-  if (!currentModule) return;
-  const ip   = modEls.modalIpInput.value.trim();
-  const port = parseInt(modEls.modalPortInput.value, 10);
-  modEls.modalIpMsg.innerHTML = '<span class="text-info">Saving…</span>';
-  try {
-    const r = await guardedFetch(`/api/modules/${encodeURIComponent(currentModule.id)}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip, port }),
-    });
-    const body = await r.json();
-    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-    modEls.modalIpMsg.innerHTML = '<span class="text-success">Saved.</span>';
-    Object.assign(currentModule, { ip: body.ip, port: body.port });
-    modEls.modalStatus.className = 'badge bg-info text-dark';
-    modEls.modalStatus.textContent = `${body.ip}:${body.port}`;
-    modEls.modalOpenWrap.classList.remove('d-none');
-    modEls.modalOpenLink.href = `http://${body.ip}:${body.port}/`;
-    await loadModules();
-  } catch (e) {
-    modEls.modalIpMsg.innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`;
-  }
-});
-
-// ── LED control ─────────────────────────────────────────────────────────────
-
-async function sendLed(cmd) {
-  if (!currentModule) return;
-  modEls.modalLedMsg.innerHTML =
-    `<span class="text-info">Sending <code>${cmd}</code>…</span>`;
-  try {
-    const r = await guardedFetch(
-      `/api/modules/${encodeURIComponent(currentModule.id)}/led/${cmd}`,
-      { method: 'POST' },
-    );
-    const body = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
-    modEls.modalLedMsg.innerHTML =
-      `<span class="text-success">LED command <code>${cmd}</code> sent.</span>`;
-  } catch (e) {
-    modEls.modalLedMsg.innerHTML = `<span class="text-danger">${escapeHtml(e.message)}</span>`;
-  }
-}
-
-modEls.modalLedOn   .addEventListener('click', () => sendLed('on'));
-modEls.modalLedOff  .addEventListener('click', () => sendLed('off'));
-modEls.modalLedBlink.addEventListener('click', () => sendLed('blink'));
-
-// Open device page in new tab (handle click explicitly to avoid extension interference)
-modEls.modalOpenLink.addEventListener('click', (e) => {
-  e.preventDefault();
-  const url = modEls.modalOpenLink.href;
-  if (url && url !== '#') {
-    window.open(url, '_blank', 'noopener,noreferrer');
-  }
-});
 
 // Refresh modules whenever the Modules tab is shown
 document.getElementById('modules-tab').addEventListener('shown.bs.tab', loadModules);
