@@ -1,0 +1,260 @@
+[
+  {
+    "id": "esp8266-001",
+    "name": "ESP8266 NodeMCU",
+    "type": "ESP8266",
+    "model": "NodeMCU v2 (ESP-12E)",
+    "chipId": "",
+    "macAddress": "",
+    "ip": "172.20.10.2",
+    "port": 80,
+    "hasLed": true,
+    "images": [
+      {
+        "filename": "esp8266-001.jpg",
+        "rotation": 0,
+        "isDefault": true
+      }
+    ],
+    "pinout": {
+      "leftPins": [
+        {
+          "label": "A0",
+          "gpio": "ADC0",
+          "notes": "10-bit ADC (0-3.3V max)",
+          "type": "gpio"
+        },
+        {
+          "label": "G",
+          "gpio": "",
+          "notes": "Ground",
+          "type": "ground"
+        },
+        {
+          "label": "VV",
+          "gpio": "",
+          "notes": "VUSB / 5V input (from USB)",
+          "type": "power"
+        },
+        {
+          "label": "S3",
+          "gpio": "GPIO10",
+          "notes": "Flash SPI SD3. Usually avoid for normal I/O.",
+          "type": "gpio"
+        },
+        {
+          "label": "S2",
+          "gpio": "GPIO9",
+          "notes": "Flash SPI SD2. Usually avoid for normal I/O.",
+          "type": "gpio"
+        },
+        {
+          "label": "S1",
+          "gpio": "GPIO8",
+          "notes": "Flash SPI SD1. Usually avoid for normal I/O.",
+          "type": "gpio"
+        },
+        {
+          "label": "SC",
+          "gpio": "GPIO11",
+          "notes": "Flash SPI CMD. Usually avoid for normal I/O.",
+          "type": "gpio"
+        },
+        {
+          "label": "S0",
+          "gpio": "GPIO7",
+          "notes": "Flash SPI SD0. Usually avoid for normal I/O.",
+          "type": "gpio"
+        },
+        {
+          "label": "SK",
+          "gpio": "GPIO6",
+          "notes": "Flash SPI CLK. Usually avoid for normal I/O.",
+          "type": "gpio"
+        },
+        {
+          "label": "G",
+          "gpio": "",
+          "notes": "Ground",
+          "type": "ground"
+        },
+        {
+          "label": "3V",
+          "gpio": "",
+          "notes": "3.3V regulated output",
+          "type": "power"
+        },
+        {
+          "label": "EN",
+          "gpio": "",
+          "notes": "Enable / CH_PD. Chip enabled when HIGH.",
+          "type": "power"
+        },
+        {
+          "label": "RST",
+          "gpio": "",
+          "notes": "Reset, active LOW",
+          "type": "power"
+        },
+        {
+          "label": "G",
+          "gpio": "",
+          "notes": "Ground",
+          "type": "ground"
+        },
+        {
+          "label": "VIN",
+          "gpio": "",
+          "notes": "5V input to onboard regulator",
+          "type": "power"
+        }
+      ],
+      "rightPins": [
+        {
+          "label": "D0",
+          "gpio": "GPIO16",
+          "notes": "Wake from deep sleep. Limited GPIO features compared with other pins.",
+          "type": "gpio"
+        },
+        {
+          "label": "D1",
+          "gpio": "GPIO5",
+          "notes": "Commonly used as I2C SCL",
+          "type": "gpio"
+        },
+        {
+          "label": "D2",
+          "gpio": "GPIO4",
+          "notes": "Commonly used as I2C SDA",
+          "type": "gpio"
+        },
+        {
+          "label": "D3",
+          "gpio": "GPIO0",
+          "notes": "Boot mode pin. Must normally be HIGH at boot.",
+          "type": "gpio"
+        },
+        {
+          "label": "D4",
+          "gpio": "GPIO2",
+          "notes": "Often connected to onboard LED. Must normally be HIGH at boot.",
+          "type": "gpio"
+        },
+        {
+          "label": "3V",
+          "gpio": "",
+          "notes": "3.3V regulated output",
+          "type": "power"
+        },
+        {
+          "label": "G",
+          "gpio": "",
+          "notes": "Ground",
+          "type": "ground"
+        },
+        {
+          "label": "D5",
+          "gpio": "GPIO14",
+          "notes": "SPI CLK / SCLK",
+          "type": "gpio"
+        },
+        {
+          "label": "D6",
+          "gpio": "GPIO12",
+          "notes": "SPI MISO",
+          "type": "gpio"
+        },
+        {
+          "label": "D7",
+          "gpio": "GPIO13",
+          "notes": "SPI MOSI",
+          "type": "gpio"
+        },
+        {
+          "label": "D8",
+          "gpio": "GPIO15",
+          "notes": "SPI SS / CS. Boot strap pin; must normally be LOW at boot.",
+          "type": "gpio"
+        },
+        {
+          "label": "RX",
+          "gpio": "GPIO3",
+          "notes": "UART0 RX",
+          "type": "gpio"
+        },
+        {
+          "label": "TX",
+          "gpio": "GPIO1",
+          "notes": "UART0 TX",
+          "type": "gpio"
+        },
+        {
+          "label": "G",
+          "gpio": "",
+          "notes": "Ground",
+          "type": "ground"
+        },
+        {
+          "label": "3V",
+          "gpio": "",
+          "notes": "3.3V regulated output",
+          "type": "power"
+        }
+      ]
+    },
+    "parts": [
+      {
+        "name": "INMP441 MEMS Microphone",
+        "type": "Microphone",
+        "manufacturer": "InvenSense",
+        "model": "INMP441",
+        "quantity": 2,
+        "description": "I2S digital MEMS microphone with high SNR and wide frequency response",
+        "datasheet": "https://invensense.tdk.com/products/analog/inmp441/",
+        "notes": "Requires I2S interface, 3.3V power, left/right channel configurable"
+      }
+    ],
+    "notes": {
+      "links": [
+        {
+          "title": "ESP8266 Arduino Core Documentation",
+          "url": "https://arduino-esp8266.readthedocs.io/"
+        },
+        {
+          "title": "NodeMCU Pinout Reference",
+          "url": "https://github.com/nodemcu/nodemcu-devkit-v1.0"
+        }
+      ],
+      "purchaseDate": "2024-01-15",
+      "quantity": 3,
+      "projects": [
+        "esp8266-inmp441 Audio Streaming",
+        "WiFi Temperature Monitor",
+        "Smart Home Controller"
+      ],
+      "generalNotes": "This module is used for testing audio streaming with INMP441 microphone.\nWorks great with 3.3V logic.\nRemember to use level shifter for 5V devices."
+    }
+  },
+  {
+    "id": "esp32s3-001",
+    "name": "ESP32-S3 Unit 1",
+    "type": "ESP32-S3",
+    "model": "ESP32-S3-WROOM-1",
+    "chipId": "",
+    "macAddress": "",
+    "ip": "",
+    "port": 80,
+    "hasLed": false
+  },
+  {
+    "id": "esp32classic-001",
+    "name": "ESP32 Classic Unit 2",
+    "type": "ESP32",
+    "model": "ESP32-D0WD DevKit V1",
+    "chipId": "",
+    "macAddress": "",
+    "ip": "",
+    "port": 80,
+    "hasLed": false
+  }
+]

@@ -11,11 +11,19 @@ const pageEls = {
   id: document.getElementById('page-id'),
   deviceLink: document.getElementById('page-device-link'),
   editBtn: document.getElementById('page-edit-btn'),
-  imageContainer: document.getElementById('page-image-container'),
+  imageDisplay: document.getElementById('page-image-display'),
+  carouselPrev: document.getElementById('carousel-prev'),
+  carouselNext: document.getElementById('carousel-next'),
+  carouselCounter: document.getElementById('carousel-counter'),
+  carouselNav: document.getElementById('carousel-nav'),
   rotate0: document.getElementById('rotate-0'),
   rotate90: document.getElementById('rotate-90'),
   rotate180: document.getElementById('rotate-180'),
   rotate270: document.getElementById('rotate-270'),
+  uploadInput: document.getElementById('image-upload-input'),
+  uploadStatus: document.getElementById('upload-status'),
+  deleteImageBtn: document.getElementById('delete-image-btn'),
+  setDefaultBtn: document.getElementById('set-default-btn'),
   identId: document.getElementById('page-ident-id'),
   identModel: document.getElementById('page-ident-model'),
   identMac: document.getElementById('page-ident-mac'),
@@ -32,12 +40,83 @@ const pageEls = {
   pinoutSchematic: document.getElementById('page-pinout-schematic'),
   viewBottom: document.getElementById('view-bottom'),
   viewTop: document.getElementById('view-top'),
-  specsContent: document.getElementById('page-specs-content')
+  specsContent: document.getElementById('page-specs-content'),
+  partsContent: document.getElementById('page-parts-content'),
+  partsEditBtn: document.getElementById('parts-edit-btn'),
+  partsSaveBtn: document.getElementById('parts-save-btn'),
+  partsCancelBtn: document.getElementById('parts-cancel-btn'),
+  partsAddBtn: document.getElementById('parts-add-btn'),
+  notesContent: document.getElementById('page-notes-content'),
+  notesEditBtn: document.getElementById('notes-edit-btn'),
+  notesSaveBtn: document.getElementById('notes-save-btn'),
+  notesCancelBtn: document.getElementById('notes-cancel-btn')
 };
 
 let currentModule = null;
-let currentRotation = 0;
+let currentImageIndex = 0;
 let currentView = 'bottom'; // 'bottom' or 'top'
+let isEditMode = false;
+let currentPinout = null;
+let isPartsEditMode = false;
+let isNotesEditMode = false;
+let currentParts = null;
+let currentNotes = null;
+
+// Smart back navigation based on referrer parameter
+function goBack() {
+  const params = new URLSearchParams(window.location.search);
+  const from = params.get('from');
+  
+  if (from === 'modules') {
+    // Navigate to home page with modules tab active
+    window.location.href = '/?tab=modules';
+  } else if (window.history.length > 1) {
+    // Try browser back if there's history
+    window.history.back();
+  } else {
+    // Fallback to home page
+    window.location.href = '/';
+  }
+}
+
+// ── Default Pinout Templates ───────────────────────────────────────────────
+
+const DEFAULT_ESP8266_PINOUT = {
+  leftPins: [
+    { label: 'D0', gpio: 'GPIO16', notes: 'Wake from deep sleep / LED_BUILTIN (no PWM/I²C/interrupts)', type: 'gpio' },
+    { label: 'D1', gpio: 'GPIO5', notes: 'SCL (I²C)', type: 'gpio' },
+    { label: 'D2', gpio: 'GPIO4', notes: 'SDA (I²C)', type: 'gpio' },
+    { label: 'D3', gpio: 'GPIO0', notes: '⚠️ Boot mode (pulled high, must be HIGH at boot)', type: 'gpio' },
+    { label: 'D4', gpio: 'GPIO2', notes: '⚠️ Onboard LED (active LOW) — must be HIGH at boot', type: 'gpio' },
+    { label: '3V3', gpio: '—', notes: '3.3V regulated output', type: 'power' },
+    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' },
+    { label: 'D5', gpio: 'GPIO14', notes: 'SPI CLK', type: 'gpio' },
+    { label: 'D6', gpio: 'GPIO12', notes: 'SPI MISO', type: 'gpio' },
+    { label: 'D7', gpio: 'GPIO13', notes: 'SPI MOSI', type: 'gpio' },
+    { label: 'D8', gpio: 'GPIO15', notes: '⚠️ SPI SS (pulled low, must be LOW at boot)', type: 'gpio' },
+    { label: 'RX', gpio: 'GPIO3', notes: 'UART RX0 (D9)', type: 'gpio' },
+    { label: 'TX', gpio: 'GPIO1', notes: 'UART TX0 (D10)', type: 'gpio' },
+    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' },
+    { label: 'VIN', gpio: '—', notes: '5V input (from USB)', type: 'power' }
+  ],
+  rightPins: [
+    { label: 'A0', gpio: 'ADC', notes: '10-bit ADC (0-3.3V max)', type: 'gpio' },
+    { label: 'RST', gpio: '—', notes: 'Reset (active low)', type: 'power' },
+    { label: 'RSV', gpio: '—', notes: 'Reserved', type: 'power' },
+    { label: 'RSV', gpio: '—', notes: 'Reserved', type: 'power' },
+    { label: 'SD3', gpio: 'GPIO10', notes: 'Flash SPI (SD3)', type: 'gpio' },
+    { label: 'SD2', gpio: 'GPIO9', notes: 'Flash SPI (SD2)', type: 'gpio' },
+    { label: 'SD1', gpio: 'GPIO8', notes: 'Flash SPI (SD1)', type: 'gpio' },
+    { label: 'CMD', gpio: 'GPIO11', notes: 'Flash SPI (CMD)', type: 'gpio' },
+    { label: 'SD0', gpio: 'GPIO7', notes: 'Flash SPI (SD0)', type: 'gpio' },
+    { label: 'CLK', gpio: 'GPIO6', notes: 'Flash SPI (CLK)', type: 'gpio' },
+    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' },
+    { label: '3V3', gpio: '—', notes: '3.3V regulated output', type: 'power' },
+    { label: 'EN', gpio: '—', notes: 'Enable (CH_PD)', type: 'power' },
+    { label: 'RST', gpio: '—', notes: 'Reset (active low)', type: 'power' },
+    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' }
+  ]
+};
 
 // ── Utility Functions ───────────────────────────────────────────────────────
 
@@ -708,9 +787,15 @@ function renderPage(m) {
     window.location.href = `/?edit=${encodeURIComponent(m.id)}`;
   });
 
-  // Image
-  pageEls.imageContainer.innerHTML = moduleThumbnail(m);
-  pageEls.imageContainer.className = 'module-detail-image rotate-0';
+  // Initialize image carousel - show default image first if available
+  currentImageIndex = 0;
+  if (m.images && m.images.length > 0) {
+    const defaultIndex = m.images.findIndex(img => img.isDefault);
+    if (defaultIndex >= 0) {
+      currentImageIndex = defaultIndex;
+    }
+  }
+  updateImageDisplay();
 
   // Identity
   pageEls.identId.textContent = m.id || '—';
@@ -736,6 +821,536 @@ function renderPage(m) {
     renderPinoutSchematic(m);
   } else {
     pageEls.pinoutCard.classList.add('d-none');
+  }
+
+  // Parts & Components
+  renderParts(m);
+
+  // Notes
+  renderNotes(m);
+}
+
+// ── Parts & Components ──────────────────────────────────────────────────────
+
+function renderParts(m) {
+  currentParts = m.parts || [];
+  updatePartsDisplay();
+  setupPartsEventListeners();
+}
+
+function updatePartsDisplay() {
+  if (!currentParts || currentParts.length === 0) {
+    pageEls.partsContent.innerHTML = '<div class="text-secondary small text-center py-3">No parts or components added yet. Click "Add Component" to get started.</div>';
+    return;
+  }
+
+  let html = '<div class="parts-list">';
+  currentParts.forEach((part, idx) => {
+    if (isPartsEditMode) {
+      html += renderPartEdit(part, idx);
+    } else {
+      html += renderPartView(part, idx);
+    }
+  });
+  html += '</div>';
+  pageEls.partsContent.innerHTML = html;
+
+  if (isPartsEditMode) {
+    setupPartEditListeners();
+  }
+}
+
+function renderPartView(part, idx) {
+  return `
+    <div class="part-card card bg-black border-secondary mb-3" data-index="${idx}">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <h6 class="text-info mb-0">${escapeHtml(part.name || 'Unnamed Component')}</h6>
+          <span class="badge bg-secondary">${escapeHtml(part.type || 'Component')}</span>
+        </div>
+        ${part.description ? `<p class="small text-light mb-2">${escapeHtml(part.description)}</p>` : ''}
+        <div class="row g-2 small">
+          ${part.manufacturer ? `<div class="col-md-4"><span class="text-secondary">Manufacturer:</span> ${escapeHtml(part.manufacturer)}</div>` : ''}
+          ${part.model ? `<div class="col-md-4"><span class="text-secondary">Model:</span> ${escapeHtml(part.model)}</div>` : ''}
+          ${part.quantity !== undefined ? `<div class="col-md-4"><span class="text-secondary">Quantity:</span> ${part.quantity}</div>` : ''}
+          ${part.datasheet ? `<div class="col-12 mt-2"><span class="text-secondary">Datasheet:</span> <a href="${escapeHtml(part.datasheet)}" target="_blank" class="text-info">View →</a></div>` : ''}
+          ${part.notes ? `<div class="col-12 mt-2"><span class="text-secondary">Notes:</span> ${escapeHtml(part.notes)}</div>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderPartEdit(part, idx) {
+  return `
+    <div class="part-card card bg-black border-secondary mb-3" data-index="${idx}">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+          <h6 class="text-warning mb-0">✏️ Editing Component</h6>
+          <button class="btn btn-sm btn-outline-danger part-delete-btn" data-index="${idx}">🗑️ Delete</button>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-8">
+            <label class="form-label small text-secondary">Name *</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                   data-field="name" data-index="${idx}" value="${escapeHtml(part.name || '')}" placeholder="e.g., INMP441 Microphone">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small text-secondary">Type</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                   data-field="type" data-index="${idx}" value="${escapeHtml(part.type || '')}" placeholder="e.g., Microphone">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small text-secondary">Manufacturer</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                   data-field="manufacturer" data-index="${idx}" value="${escapeHtml(part.manufacturer || '')}" placeholder="e.g., InvenSense">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label small text-secondary">Model</label>
+            <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                   data-field="model" data-index="${idx}" value="${escapeHtml(part.model || '')}" placeholder="e.g., INMP441">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label small text-secondary">Qty</label>
+            <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                   data-field="quantity" data-index="${idx}" value="${part.quantity !== undefined ? part.quantity : ''}" min="0">
+          </div>
+          <div class="col-12">
+            <label class="form-label small text-secondary">Description</label>
+            <textarea class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                      data-field="description" data-index="${idx}" rows="2" placeholder="Brief description of the component">${escapeHtml(part.description || '')}</textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label small text-secondary">Datasheet URL</label>
+            <input type="url" class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                   data-field="datasheet" data-index="${idx}" value="${escapeHtml(part.datasheet || '')}" placeholder="https://...">
+          </div>
+          <div class="col-12">
+            <label class="form-label small text-secondary">Notes</label>
+            <textarea class="form-control form-control-sm bg-dark text-light border-secondary part-input" 
+                      data-field="notes" data-index="${idx}" rows="2" placeholder="Additional notes or observations">${escapeHtml(part.notes || '')}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setupPartsEventListeners() {
+  if (pageEls.partsEditBtn) {
+    pageEls.partsEditBtn.addEventListener('click', () => {
+      isPartsEditMode = true;
+      pageEls.partsEditBtn.classList.add('d-none');
+      pageEls.partsSaveBtn.classList.remove('d-none');
+      pageEls.partsCancelBtn.classList.remove('d-none');
+      updatePartsDisplay();
+    });
+  }
+
+  if (pageEls.partsSaveBtn) {
+    pageEls.partsSaveBtn.addEventListener('click', savePartsData);
+  }
+
+  if (pageEls.partsCancelBtn) {
+    pageEls.partsCancelBtn.addEventListener('click', () => {
+      isPartsEditMode = false;
+      currentParts = currentModule.parts || [];
+      pageEls.partsEditBtn.classList.remove('d-none');
+      pageEls.partsSaveBtn.classList.add('d-none');
+      pageEls.partsCancelBtn.classList.add('d-none');
+      updatePartsDisplay();
+    });
+  }
+
+  if (pageEls.partsAddBtn) {
+    pageEls.partsAddBtn.addEventListener('click', () => {
+      if (!isPartsEditMode) {
+        isPartsEditMode = true;
+        pageEls.partsEditBtn.classList.add('d-none');
+        pageEls.partsSaveBtn.classList.remove('d-none');
+        pageEls.partsCancelBtn.classList.remove('d-none');
+      }
+      currentParts.push({ name: '', type: '', manufacturer: '', model: '', quantity: 1, description: '', datasheet: '', notes: '' });
+      updatePartsDisplay();
+    });
+  }
+}
+
+function setupPartEditListeners() {
+  document.querySelectorAll('.part-input').forEach(input => {
+    input.addEventListener('input', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      const field = e.target.dataset.field;
+      const value = e.target.value;
+      
+      if (currentParts[idx]) {
+        if (field === 'quantity') {
+          currentParts[idx][field] = parseInt(value) || 0;
+        } else {
+          currentParts[idx][field] = value;
+        }
+      }
+    });
+  });
+
+  document.querySelectorAll('.part-delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      if (confirm('Delete this component?')) {
+        currentParts.splice(idx, 1);
+        updatePartsDisplay();
+      }
+    });
+  });
+}
+
+async function savePartsData() {
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/parts`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parts: currentParts })
+    });
+
+    if (!response.ok) throw new Error('Failed to save parts data');
+
+    const data = await response.json();
+    currentModule.parts = data.parts;
+    isPartsEditMode = false;
+    pageEls.partsEditBtn.classList.remove('d-none');
+    pageEls.partsSaveBtn.classList.add('d-none');
+    pageEls.partsCancelBtn.classList.add('d-none');
+    updatePartsDisplay();
+    alert('✓ Parts data saved successfully!');
+  } catch (err) {
+    console.error('Save failed:', err);
+    alert('Failed to save parts data: ' + err.message);
+  }
+}
+
+// ── Notes & Information ─────────────────────────────────────────────────────
+
+function renderNotes(m) {
+  currentNotes = m.notes || {
+    links: [],
+    purchaseDate: '',
+    quantity: 0,
+    projects: [],
+    generalNotes: ''
+  };
+  updateNotesDisplay();
+  setupNotesEventListeners();
+}
+
+function updateNotesDisplay() {
+  if (isNotesEditMode) {
+    pageEls.notesContent.innerHTML = renderNotesEdit();
+    setupNotesEditListeners();
+  } else {
+    pageEls.notesContent.innerHTML = renderNotesView();
+  }
+}
+
+function renderNotesView() {
+  const notes = currentNotes;
+  const hasData = notes.links?.length > 0 || notes.purchaseDate || notes.quantity > 0 || notes.projects?.length > 0 || notes.generalNotes;
+
+  if (!hasData) {
+    return '<div class="text-secondary small text-center py-3">No notes added yet. Click "Edit" to add information.</div>';
+  }
+
+  let html = '<div class="notes-sections">';
+
+  // Purchase Information
+  if (notes.purchaseDate || notes.quantity > 0) {
+    html += `
+      <div class="notes-section card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <h6 class="text-info mb-3">🛒 Purchase Information</h6>
+          <div class="row g-2 small">
+            ${notes.purchaseDate ? `<div class="col-md-6"><span class="text-secondary">Purchase Date:</span> ${escapeHtml(notes.purchaseDate)}</div>` : ''}
+            ${notes.quantity > 0 ? `<div class="col-md-6"><span class="text-secondary">Quantity Available:</span> ${notes.quantity}</div>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Related Links
+  if (notes.links?.length > 0) {
+    html += `
+      <div class="notes-section card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <h6 class="text-info mb-3">🔗 Related Links</h6>
+          <ul class="list-unstyled mb-0">
+    `;
+    notes.links.forEach(link => {
+      html += `<li class="mb-2"><a href="${escapeHtml(link.url)}" target="_blank" class="text-info">${escapeHtml(link.title || link.url)} →</a></li>`;
+    });
+    html += `
+          </ul>
+        </div>
+      </div>
+    `;
+  }
+
+  // Projects
+  if (notes.projects?.length > 0) {
+    html += `
+      <div class="notes-section card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <h6 class="text-info mb-3">📁 Projects</h6>
+          <ul class="list-unstyled mb-0">
+    `;
+    notes.projects.forEach(project => {
+      html += `<li class="mb-2">• ${escapeHtml(project)}</li>`;
+    });
+    html += `
+          </ul>
+        </div>
+      </div>
+    `;
+  }
+
+  // General Notes
+  if (notes.generalNotes) {
+    html += `
+      <div class="notes-section card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <h6 class="text-info mb-3">📝 General Notes</h6>
+          <div class="small text-light" style="white-space: pre-wrap;">${escapeHtml(notes.generalNotes)}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  html += '</div>';
+  return html;
+}
+
+function renderNotesEdit() {
+  const notes = currentNotes;
+  return `
+    <div class="notes-edit-form">
+      <!-- Purchase Information -->
+      <div class="card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <h6 class="text-warning mb-3">🛒 Purchase Information</h6>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="form-label small text-secondary">Purchase Date</label>
+              <input type="date" class="form-control form-control-sm bg-dark text-light border-secondary" 
+                     id="notes-purchase-date" value="${escapeHtml(notes.purchaseDate || '')}">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small text-secondary">Quantity Available</label>
+              <input type="number" class="form-control form-control-sm bg-dark text-light border-secondary" 
+                     id="notes-quantity" value="${notes.quantity || 0}" min="0">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Related Links -->
+      <div class="card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="text-warning mb-0">🔗 Related Links</h6>
+            <button class="btn btn-sm btn-outline-info" id="notes-add-link">➕ Add Link</button>
+          </div>
+          <div id="notes-links-container">
+            ${notes.links?.length > 0 ? notes.links.map((link, idx) => `
+              <div class="row g-2 mb-2 link-row" data-index="${idx}">
+                <div class="col-md-5">
+                  <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary link-title" 
+                         value="${escapeHtml(link.title || '')}" placeholder="Link title">
+                </div>
+                <div class="col-md-6">
+                  <input type="url" class="form-control form-control-sm bg-dark text-light border-secondary link-url" 
+                         value="${escapeHtml(link.url || '')}" placeholder="https://...">
+                </div>
+                <div class="col-md-1">
+                  <button class="btn btn-sm btn-outline-danger w-100 link-delete" data-index="${idx}">🗑️</button>
+                </div>
+              </div>
+            `).join('') : '<div class="text-secondary small">No links added yet.</div>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- Projects -->
+      <div class="card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h6 class="text-warning mb-0">📁 Projects</h6>
+            <button class="btn btn-sm btn-outline-info" id="notes-add-project">➕ Add Project</button>
+          </div>
+          <div id="notes-projects-container">
+            ${notes.projects?.length > 0 ? notes.projects.map((project, idx) => `
+              <div class="row g-2 mb-2 project-row" data-index="${idx}">
+                <div class="col-md-11">
+                  <input type="text" class="form-control form-control-sm bg-dark text-light border-secondary project-name" 
+                         value="${escapeHtml(project)}" placeholder="Project name">
+                </div>
+                <div class="col-md-1">
+                  <button class="btn btn-sm btn-outline-danger w-100 project-delete" data-index="${idx}">🗑️</button>
+                </div>
+              </div>
+            `).join('') : '<div class="text-secondary small">No projects added yet.</div>'}
+          </div>
+        </div>
+      </div>
+
+      <!-- General Notes -->
+      <div class="card bg-black border-secondary mb-3">
+        <div class="card-body">
+          <h6 class="text-warning mb-3">📝 General Notes</h6>
+          <textarea class="form-control bg-dark text-light border-secondary" id="notes-general" rows="6" 
+                    placeholder="Add any general notes, observations, or special instructions...">${escapeHtml(notes.generalNotes || '')}</textarea>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function setupNotesEventListeners() {
+  if (pageEls.notesEditBtn) {
+    pageEls.notesEditBtn.addEventListener('click', () => {
+      isNotesEditMode = true;
+      pageEls.notesEditBtn.classList.add('d-none');
+      pageEls.notesSaveBtn.classList.remove('d-none');
+      pageEls.notesCancelBtn.classList.remove('d-none');
+      updateNotesDisplay();
+    });
+  }
+
+  if (pageEls.notesSaveBtn) {
+    pageEls.notesSaveBtn.addEventListener('click', saveNotesData);
+  }
+
+  if (pageEls.notesCancelBtn) {
+    pageEls.notesCancelBtn.addEventListener('click', () => {
+      isNotesEditMode = false;
+      currentNotes = currentModule.notes || { links: [], purchaseDate: '', quantity: 0, projects: [], generalNotes: '' };
+      pageEls.notesEditBtn.classList.remove('d-none');
+      pageEls.notesSaveBtn.classList.add('d-none');
+      pageEls.notesCancelBtn.classList.add('d-none');
+      updateNotesDisplay();
+    });
+  }
+}
+
+function setupNotesEditListeners() {
+  // Add link button
+  const addLinkBtn = document.getElementById('notes-add-link');
+  if (addLinkBtn) {
+    addLinkBtn.addEventListener('click', () => {
+      if (!currentNotes.links) currentNotes.links = [];
+      currentNotes.links.push({ title: '', url: '' });
+      updateNotesDisplay();
+    });
+  }
+
+  // Add project button
+  const addProjectBtn = document.getElementById('notes-add-project');
+  if (addProjectBtn) {
+    addProjectBtn.addEventListener('click', () => {
+      if (!currentNotes.projects) currentNotes.projects = [];
+      currentNotes.projects.push('');
+      updateNotesDisplay();
+    });
+  }
+
+  // Purchase date and quantity
+  const purchaseDateInput = document.getElementById('notes-purchase-date');
+  if (purchaseDateInput) {
+    purchaseDateInput.addEventListener('change', (e) => {
+      currentNotes.purchaseDate = e.target.value;
+    });
+  }
+
+  const quantityInput = document.getElementById('notes-quantity');
+  if (quantityInput) {
+    quantityInput.addEventListener('input', (e) => {
+      currentNotes.quantity = parseInt(e.target.value) || 0;
+    });
+  }
+
+  // Link inputs
+  document.querySelectorAll('.link-title').forEach(input => {
+    input.addEventListener('input', (e) => {
+      const idx = parseInt(e.target.closest('.link-row').dataset.index);
+      if (currentNotes.links[idx]) {
+        currentNotes.links[idx].title = e.target.value;
+      }
+    });
+  });
+
+  document.querySelectorAll('.link-url').forEach(input => {
+    input.addEventListener('input', (e) => {
+      const idx = parseInt(e.target.closest('.link-row').dataset.index);
+      if (currentNotes.links[idx]) {
+        currentNotes.links[idx].url = e.target.value;
+      }
+    });
+  });
+
+  document.querySelectorAll('.link-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      currentNotes.links.splice(idx, 1);
+      updateNotesDisplay();
+    });
+  });
+
+  // Project inputs
+  document.querySelectorAll('.project-name').forEach(input => {
+    input.addEventListener('input', (e) => {
+      const idx = parseInt(e.target.closest('.project-row').dataset.index);
+      if (currentNotes.projects[idx] !== undefined) {
+        currentNotes.projects[idx] = e.target.value;
+      }
+    });
+  });
+
+  document.querySelectorAll('.project-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const idx = parseInt(e.target.dataset.index);
+      currentNotes.projects.splice(idx, 1);
+      updateNotesDisplay();
+    });
+  });
+
+  // General notes
+  const generalNotesInput = document.getElementById('notes-general');
+  if (generalNotesInput) {
+    generalNotesInput.addEventListener('input', (e) => {
+      currentNotes.generalNotes = e.target.value;
+    });
+  }
+}
+
+async function saveNotesData() {
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/notes`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ notes: currentNotes })
+    });
+
+    if (!response.ok) throw new Error('Failed to save notes');
+
+    const data = await response.json();
+    currentModule.notes = data.notes;
+    isNotesEditMode = false;
+    pageEls.notesEditBtn.classList.remove('d-none');
+    pageEls.notesSaveBtn.classList.add('d-none');
+    pageEls.notesCancelBtn.classList.add('d-none');
+    updateNotesDisplay();
+    alert('✓ Notes saved successfully!');
+  } catch (err) {
+    console.error('Save failed:', err);
+    alert('Failed to save notes: ' + err.message);
   }
 }
 
@@ -783,92 +1398,105 @@ function renderPinoutSchematic(m) {
   }
 }
 
+function getPinout() {
+  // Use module's pinout if available, otherwise default
+  // Make a deep copy to avoid mutating the default template
+  const pinout = currentModule?.pinout || DEFAULT_ESP8266_PINOUT;
+  return JSON.parse(JSON.stringify(pinout));
+}
+
 function renderESP8266Pinout() {
-  // NodeMCU v2 pinout - 15 pins per side
-  // Bottom view (default): USB at bottom, D0 top-left, A0 top-right, VIN bottom-left, 3V3 bottom-right
-  // Top view: Mirrored horizontally, USB at bottom
-
-  const leftPins = [
-    { label: 'D0', gpio: 'GPIO16', notes: 'Wake from deep sleep / LED_BUILTIN (no PWM/I²C/interrupts)', type: 'gpio' },
-    { label: 'D1', gpio: 'GPIO5', notes: 'SCL (I²C)', type: 'gpio' },
-    { label: 'D2', gpio: 'GPIO4', notes: 'SDA (I²C)', type: 'gpio' },
-    { label: 'D3', gpio: 'GPIO0', notes: '⚠️ Boot mode (pulled high, must be HIGH at boot)', type: 'gpio' },
-    { label: 'D4', gpio: 'GPIO2', notes: '⚠️ Onboard LED (active LOW) — must be HIGH at boot', type: 'gpio' },
-    { label: '3V3', gpio: '—', notes: '3.3V regulated output', type: 'power' },
-    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' },
-    { label: 'D5', gpio: 'GPIO14', notes: 'SPI CLK', type: 'gpio' },
-    { label: 'D6', gpio: 'GPIO12', notes: 'SPI MISO', type: 'gpio' },
-    { label: 'D7', gpio: 'GPIO13', notes: 'SPI MOSI', type: 'gpio' },
-    { label: 'D8', gpio: 'GPIO15', notes: '⚠️ SPI SS (pulled low, must be LOW at boot)', type: 'gpio' },
-    { label: 'RX', gpio: 'GPIO3', notes: 'UART RX0 (D9)', type: 'gpio' },
-    { label: 'TX', gpio: 'GPIO1', notes: 'UART TX0 (D10)', type: 'gpio' },
-    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' },
-    { label: 'VIN', gpio: '—', notes: '5V input (from USB)', type: 'power' }
-  ];
-
-  const rightPins = [
-    { label: 'A0', gpio: 'ADC', notes: '10-bit ADC (0-3.3V max)', type: 'gpio' },
-    { label: 'RST', gpio: '—', notes: 'Reset (active low)', type: 'power' },
-    { label: 'RSV', gpio: '—', notes: 'Reserved', type: 'power' },
-    { label: 'RSV', gpio: '—', notes: 'Reserved', type: 'power' },
-    { label: 'SD3', gpio: 'GPIO10', notes: 'Flash SPI (SD3)', type: 'gpio' },
-    { label: 'SD2', gpio: 'GPIO9', notes: 'Flash SPI (SD2)', type: 'gpio' },
-    { label: 'SD1', gpio: 'GPIO8', notes: 'Flash SPI (SD1)', type: 'gpio' },
-    { label: 'CMD', gpio: 'GPIO11', notes: 'Flash SPI (CMD)', type: 'gpio' },
-    { label: 'SD0', gpio: 'GPIO7', notes: 'Flash SPI (SD0)', type: 'gpio' },
-    { label: 'CLK', gpio: 'GPIO6', notes: 'Flash SPI (CLK)', type: 'gpio' },
-    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' },
-    { label: '3V3', gpio: '—', notes: '3.3V regulated output', type: 'power' },
-    { label: 'EN', gpio: '—', notes: 'Enable (CH_PD)', type: 'power' },
-    { label: 'RST', gpio: '—', notes: 'Reset (active low)', type: 'power' },
-    { label: 'GND', gpio: '—', notes: 'Ground', type: 'ground' }
-  ];
+  const pinout = getPinout();
+  currentPinout = pinout;
+  
+  const leftPins = pinout.leftPins;
+  const rightPins = pinout.rightPins;
 
   // Adjust for top/bottom view
   let leftDisplay = leftPins;
   let rightDisplay = rightPins;
+  let leftDataArray = 'leftPins';
+  let rightDataArray = 'rightPins';
 
   if (currentView === 'top') {
     // Top view: swap sides and keep same top-to-bottom order
     leftDisplay = rightPins;
     rightDisplay = leftPins;
+    leftDataArray = 'rightPins';
+    rightDataArray = 'leftPins';
   }
 
-  const leftHTML = leftDisplay.map((pin, idx) => `
-    <div class="gpio-pin-row ${pin.type}">
-      <div class="gpio-pin-number">${idx + 1}</div>
-      <div class="gpio-pin-hole"></div>
-      <div class="gpio-pin-content">
-        <div class="gpio-pin-line1">
-          <span class="gpio-pin-label">${escapeHtml(pin.label)}</span>
-          <span class="gpio-pin-gpio">${escapeHtml(pin.gpio)}</span>
+  const renderPinRow = (pin, idx, displaySide, dataArray) => {
+    const pinNumber = displaySide === 'left' ? idx + 1 : idx + 16;
+    
+    if (isEditMode) {
+      return `
+        <div class="gpio-pin-row ${pin.type} editable" data-array="${dataArray}" data-index="${idx}">
+          ${displaySide === 'left' ? `<div class="gpio-pin-number">${pinNumber}</div>` : ''}
+          ${displaySide === 'left' ? '<div class="gpio-pin-hole"></div>' : ''}
+          <div class="gpio-pin-content">
+            <div class="gpio-pin-line1">
+              <input type="text" class="pin-edit-input pin-label-input" value="${escapeHtml(pin.label)}" data-field="label" />
+              <input type="text" class="pin-edit-input pin-gpio-input" value="${escapeHtml(pin.gpio)}" data-field="gpio" />
+            </div>
+            <div class="gpio-pin-line2">
+              <input type="text" class="pin-edit-input pin-notes-input" value="${escapeHtml(pin.notes)}" data-field="notes" />
+            </div>
+          </div>
+          ${displaySide === 'right' ? '<div class="gpio-pin-hole"></div>' : ''}
+          ${displaySide === 'right' ? `<div class="gpio-pin-number">${pinNumber}</div>` : ''}
         </div>
-        <div class="gpio-pin-line2">
-          <span class="gpio-pin-notes">${escapeHtml(pin.notes)}</span>
+      `;
+    } else {
+      return `
+        <div class="gpio-pin-row ${pin.type}">
+          ${displaySide === 'left' ? `<div class="gpio-pin-number">${pinNumber}</div>` : ''}
+          ${displaySide === 'left' ? '<div class="gpio-pin-hole"></div>' : ''}
+          <div class="gpio-pin-content">
+            <div class="gpio-pin-line1">
+              <span class="gpio-pin-label">${escapeHtml(pin.label)}</span>
+              <span class="gpio-pin-gpio">${escapeHtml(pin.gpio)}</span>
+            </div>
+            <div class="gpio-pin-line2">
+              <span class="gpio-pin-notes">${escapeHtml(pin.notes)}</span>
+            </div>
+          </div>
+          ${displaySide === 'right' ? '<div class="gpio-pin-hole"></div>' : ''}
+          ${displaySide === 'right' ? `<div class="gpio-pin-number">${pinNumber}</div>` : ''}
         </div>
-      </div>
-    </div>
-  `).join('');
+      `;
+    }
+  };
 
-  const rightHTML = rightDisplay.map((pin, idx) => `
-    <div class="gpio-pin-row ${pin.type}">
-      <div class="gpio-pin-content">
-        <div class="gpio-pin-line1">
-          <span class="gpio-pin-gpio">${escapeHtml(pin.gpio)}</span>
-          <span class="gpio-pin-label">${escapeHtml(pin.label)}</span>
-        </div>
-        <div class="gpio-pin-line2">
-          <span class="gpio-pin-notes">${escapeHtml(pin.notes)}</span>
-        </div>
-      </div>
-      <div class="gpio-pin-hole"></div>
-      <div class="gpio-pin-number">${idx + 16}</div>
-    </div>
-  `).join('');
+  const leftHTML = leftDisplay.map((pin, idx) => renderPinRow(pin, idx, 'left', leftDataArray)).join('');
+  const rightHTML = rightDisplay.map((pin, idx) => renderPinRow(pin, idx, 'right', rightDataArray)).join('');
 
   const viewLabel = currentView === 'bottom' ? 'BOTTOM VIEW' : 'TOP VIEW';
 
+  const toolbarHTML = `
+    <div class="pinout-toolbar">
+      <button class="btn btn-sm btn-outline-primary" id="copy-json-btn">
+        📋 Copy JSON Template
+      </button>
+      <button class="btn btn-sm btn-outline-success" id="import-json-btn">
+        📥 Import JSON
+      </button>
+      <button class="btn btn-sm ${isEditMode ? 'btn-warning' : 'btn-outline-warning'}" id="edit-mode-btn">
+        ${isEditMode ? '✓ Edit Mode' : '✏️ Edit Pinout'}
+      </button>
+      ${isEditMode ? `
+        <button class="btn btn-sm btn-success" id="save-pinout-btn">
+          💾 Save Changes
+        </button>
+        <button class="btn btn-sm btn-outline-secondary" id="cancel-edit-btn">
+          ✕ Cancel
+        </button>
+      ` : ''}
+    </div>
+  `;
+
   pageEls.pinoutSchematic.innerHTML = `
+    ${toolbarHTML}
     <div class="gpio-pinout-schematic">
       <div class="gpio-board">
         <div class="gpio-board-title">NodeMCU v2 — ${viewLabel}</div>
@@ -889,13 +1517,327 @@ function renderESP8266Pinout() {
       </div>
     </div>
   `;
+
+  // Attach event listeners
+  attachPinoutEventListeners();
 }
 
-// ── Image Rotation ──────────────────────────────────────────────────────────
+function attachPinoutEventListeners() {
+  const copyBtn = document.getElementById('copy-json-btn');
+  const importBtn = document.getElementById('import-json-btn');
+  const editBtn = document.getElementById('edit-mode-btn');
+  const saveBtn = document.getElementById('save-pinout-btn');
+  const cancelBtn = document.getElementById('cancel-edit-btn');
 
-function setRotation(degrees) {
-  currentRotation = degrees;
-  pageEls.imageContainer.className = `module-detail-image rotate-${degrees}`;
+  if (copyBtn) copyBtn.addEventListener('click', copyJsonTemplate);
+  if (importBtn) importBtn.addEventListener('click', importJson);
+  if (editBtn) editBtn.addEventListener('click', toggleEditMode);
+  if (saveBtn) saveBtn.addEventListener('click', savePinout);
+  if (cancelBtn) cancelBtn.addEventListener('click', cancelEdit);
+
+  // Live update currentPinout as user types
+  if (isEditMode) {
+    const inputs = document.querySelectorAll('.pin-edit-input');
+    inputs.forEach(input => {
+      input.addEventListener('input', (e) => {
+        const row = e.target.closest('.gpio-pin-row');
+        const dataArray = row.dataset.array;  // 'leftPins' or 'rightPins'
+        const dataIndex = parseInt(row.dataset.index);
+        const field = e.target.dataset.field;
+        const value = e.target.value;
+
+        const pinArray = currentPinout[dataArray];
+        
+        if (pinArray && pinArray[dataIndex]) {
+          pinArray[dataIndex][field] = value;
+        }
+      });
+    });
+  }
+}
+
+function copyJsonTemplate() {
+  const template = JSON.stringify(getPinout(), null, 2);
+  navigator.clipboard.writeText(template).then(() => {
+    alert('JSON template copied to clipboard!\n\nYou can now paste this into an LLM and ask it to fill in the data.');
+  }).catch(err => {
+    console.error('Failed to copy:', err);
+    alert('Failed to copy to clipboard');
+  });
+}
+
+function importJson() {
+  const json = prompt('Paste the JSON pinout data here:');
+  if (!json) return;
+
+  try {
+    const pinout = JSON.parse(json);
+    if (!pinout.leftPins || !pinout.rightPins || 
+        !Array.isArray(pinout.leftPins) || !Array.isArray(pinout.rightPins)) {
+      throw new Error('Invalid pinout structure');
+    }
+
+    // Validate pin structure
+    const validatePin = (pin) => {
+      return pin && 
+        typeof pin.label === 'string' && 
+        typeof pin.gpio === 'string' && 
+        typeof pin.notes === 'string' && 
+        ['gpio', 'power', 'ground'].includes(pin.type);
+    };
+
+    if (!pinout.leftPins.every(validatePin) || !pinout.rightPins.every(validatePin)) {
+      throw new Error('Invalid pin structure');
+    }
+
+    currentPinout = pinout;
+    currentModule.pinout = pinout;
+    savePinoutToServer();
+  } catch (err) {
+    alert('Invalid JSON: ' + err.message);
+  }
+}
+
+function toggleEditMode() {
+  isEditMode = !isEditMode;
+  renderESP8266Pinout();
+}
+
+function cancelEdit() {
+  isEditMode = false;
+  // Reset to saved pinout
+  currentPinout = currentModule?.pinout || DEFAULT_ESP8266_PINOUT;
+  renderESP8266Pinout();
+}
+
+async function savePinout() {
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/pinout`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinout: currentPinout })
+    });
+
+    if (!response.ok) throw new Error('Failed to save pinout');
+
+    const data = await response.json();
+    currentModule.pinout = data.pinout;
+    isEditMode = false;
+    renderESP8266Pinout();
+    alert('✓ Pinout saved successfully!');
+  } catch (err) {
+    console.error('Save failed:', err);
+    alert('Failed to save pinout: ' + err.message);
+  }
+}
+
+async function savePinoutToServer() {
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/pinout`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinout: currentPinout })
+    });
+
+    if (!response.ok) throw new Error('Failed to save pinout');
+
+    const data = await response.json();
+    currentModule.pinout = data.pinout;
+    renderESP8266Pinout();
+    alert('✓ Pinout imported and saved successfully!');
+  } catch (err) {
+    console.error('Save failed:', err);
+    alert('Failed to save pinout: ' + err.message);
+  }
+}
+
+// ── Image Carousel & Rotation ───────────────────────────────────────────────
+
+function getCurrentImage() {
+  if (!currentModule) return null;
+  
+  // Try new multi-image array first
+  if (currentModule.images && currentModule.images.length > 0) {
+    return currentModule.images[currentImageIndex];
+  }
+  
+  // Fall back to legacy single image
+  if (currentModule.imageFile) {
+    return { filename: currentModule.imageFile, rotation: 0 };
+  }
+  
+  return null;
+}
+
+function getImageCount() {
+  if (!currentModule) return 0;
+  if (currentModule.images) return currentModule.images.length;
+  if (currentModule.imageFile) return 1;
+  return 0;
+}
+
+function updateImageDisplay() {
+  const img = getCurrentImage();
+  const count = getImageCount();
+  
+  if (!img) {
+    // No images - show placeholder
+    pageEls.imageDisplay.innerHTML = moduleThumbnail(currentModule || {});
+    pageEls.imageDisplay.className = 'module-image-display';
+    pageEls.carouselNav.style.display = 'none';
+    pageEls.deleteImageBtn.disabled = true;
+    pageEls.setDefaultBtn.disabled = true;
+    return;
+  }
+  
+  // Show image
+  pageEls.imageDisplay.innerHTML = `<img src="/uploads/${escapeHtml(img.filename)}" alt="Module image">`;
+  pageEls.imageDisplay.className = `module-image-display rotate-${img.rotation || 0}`;
+  
+  // Update carousel controls
+  pageEls.carouselCounter.textContent = `${currentImageIndex + 1} / ${count}`;
+  pageEls.carouselNav.style.display = count > 1 ? 'flex' : 'none';
+  pageEls.carouselPrev.disabled = currentImageIndex === 0;
+  pageEls.carouselNext.disabled = currentImageIndex >= count - 1;
+  pageEls.deleteImageBtn.disabled = false;
+  pageEls.setDefaultBtn.disabled = false;
+  
+  // Update set-default button appearance
+  if (img.isDefault) {
+    pageEls.setDefaultBtn.classList.remove('btn-outline-warning');
+    pageEls.setDefaultBtn.classList.add('btn-warning');
+    pageEls.setDefaultBtn.title = 'This is the default icon image';
+  } else {
+    pageEls.setDefaultBtn.classList.remove('btn-warning');
+    pageEls.setDefaultBtn.classList.add('btn-outline-warning');
+    pageEls.setDefaultBtn.title = 'Set as default icon image';
+  }
+}
+
+function navigateImage(direction) {
+  const count = getImageCount();
+  if (count === 0) return;
+  
+  currentImageIndex += direction;
+  if (currentImageIndex < 0) currentImageIndex = 0;
+  if (currentImageIndex >= count) currentImageIndex = count - 1;
+  
+  updateImageDisplay();
+}
+
+async function setRotation(degrees) {
+  const img = getCurrentImage();
+  if (!img || !currentModule) return;
+  
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/image/${img.filename}/rotation`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rotation: degrees })
+    });
+    
+    if (!response.ok) throw new Error('Failed to save rotation');
+    
+    const data = await response.json();
+    if (data.images) {
+      currentModule.images = data.images;
+      updateImageDisplay();
+    }
+  } catch (err) {
+    console.error('Rotation save failed:', err);
+    alert('Failed to save rotation');
+  }
+}
+
+async function uploadImage() {
+  const files = pageEls.uploadInput.files;
+  if (!files || files.length === 0) return;
+  
+  pageEls.uploadStatus.textContent = 'Uploading...';
+  
+  try {
+    const formData = new FormData();
+    formData.append('image', files[0]);
+    
+    const response = await fetch(`/api/modules/${currentModule.id}/image`, {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) throw new Error('Upload failed');
+    
+    const data = await response.json();
+    if (data.images) {
+      currentModule.images = data.images;
+      currentImageIndex = data.images.length - 1; // Show new image
+      updateImageDisplay();
+      pageEls.uploadStatus.textContent = '✓ Image added';
+      setTimeout(() => pageEls.uploadStatus.textContent = '', 2000);
+    }
+  } catch (err) {
+    console.error('Upload failed:', err);
+    pageEls.uploadStatus.textContent = '✗ Upload failed';
+    setTimeout(() => pageEls.uploadStatus.textContent = '', 3000);
+  }
+  
+  pageEls.uploadInput.value = '';
+}
+
+async function deleteCurrentImage() {
+  const img = getCurrentImage();
+  if (!img || !currentModule) return;
+  
+  if (!confirm('Delete this image?')) return;
+  
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/image`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: img.filename })
+    });
+    
+    if (!response.ok) throw new Error('Delete failed');
+    
+    const data = await response.json();
+    currentModule.images = data.images || [];
+    
+    // Adjust index after deletion
+    if (currentImageIndex >= currentModule.images.length) {
+      currentImageIndex = Math.max(0, currentModule.images.length - 1);
+    }
+    
+    updateImageDisplay();
+  } catch (err) {
+    console.error('Delete failed:', err);
+    alert('Failed to delete image');
+  }
+}
+
+async function setDefaultImage() {
+  const img = getCurrentImage();
+  if (!img || !currentModule) return;
+  
+  // Don't do anything if already default
+  if (img.isDefault) return;
+  
+  try {
+    const response = await fetch(`/api/modules/${currentModule.id}/image/${img.filename}/set-default`, {
+      method: 'PATCH'
+    });
+    
+    if (!response.ok) throw new Error('Failed to set default');
+    
+    const data = await response.json();
+    if (data.images) {
+      currentModule.images = data.images;
+      updateImageDisplay();
+      pageEls.uploadStatus.textContent = '✓ Default image updated';
+      setTimeout(() => pageEls.uploadStatus.textContent = '', 2000);
+    }
+  } catch (err) {
+    console.error('Set default failed:', err);
+    alert('Failed to set default image');
+  }
 }
 
 // ── Initialize ──────────────────────────────────────────────────────────────
@@ -905,6 +1847,19 @@ pageEls.rotate0.addEventListener('click', () => setRotation(0));
 pageEls.rotate90.addEventListener('click', () => setRotation(90));
 pageEls.rotate180.addEventListener('click', () => setRotation(180));
 pageEls.rotate270.addEventListener('click', () => setRotation(270));
+
+// Carousel navigation
+pageEls.carouselPrev.addEventListener('click', () => navigateImage(-1));
+pageEls.carouselNext.addEventListener('click', () => navigateImage(1));
+
+// Image upload
+pageEls.uploadInput.addEventListener('change', uploadImage);
+
+// Image deletion
+pageEls.deleteImageBtn.addEventListener('click', deleteCurrentImage);
+
+// Set default image
+pageEls.setDefaultBtn.addEventListener('click', setDefaultImage);
 
 // View toggle
 pageEls.viewBottom.addEventListener('change', () => {

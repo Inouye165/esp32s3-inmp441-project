@@ -12,6 +12,22 @@ display, dBFS computation, and future analysis live on the server.
 └─────────────┘          └──────────┘                └─────────────────┘
 ```
 
+> 📖 **For detailed setup instructions, troubleshooting, and architecture details, see [SETUP.md](SETUP.md)**
+
+## Features
+
+✅ Real-time audio streaming (TCP, 16 kHz mono PCM)  
+✅ Live waveform visualization (Server-Sent Events)  
+✅ Hourly WAV file recording with HTTP Range playback  
+✅ Multi-unit support (2+ ESP32s simultaneously)  
+✅ Module registry with photos and metadata  
+✅ Network health check (WiFi SSID validation)  
+✅ Auto-reconnect with exponential backoff  
+✅ Zero-fill gap handling (maintains time alignment)  
+✅ Tabbed web UI (Dashboard, Modules, Playback)  
+✅ RESTful API with JSON responses  
+✅ Jest test suite (unit + integration tests)  
+
 ## 🚀 Quick Commands
 
 ```bash
@@ -73,47 +89,78 @@ Avoid GPIO 19/20 (USB), 26–37 (flash/PSRAM), 43/44 (UART), 45/46 (strap).
 ## Project Structure
 
 ```
-├── firmware/          # PlatformIO / Arduino — ESP32 streaming firmware
+├── firmware/                   # PlatformIO / Arduino — ESP32 streaming firmware
+│   ├── platformio.ini         # Build config for ESP32-S3 + ESP32 Classic
 │   ├── include/
-│   │   ├── config.h            Pin definitions, I²S settings, stream config
-│   │   └── secrets.h           WiFi credentials + STREAM_HOST (gitignored)
-│   └── src/
-│       ├── main.cpp            setup(): WiFi → micInit → HTTP → stream task
-│       ├── wifi_manager.*      WiFi connection helper
-│       ├── i2s_microphone.*    I²S driver + DC blocker
-│       ├── audio_stream.*      TCP streaming task (sole I²S owner)
-│       └── http_api.*          /api/info and /api/health only
+│   │   ├── config.h           # Pin definitions, I²S settings, stream config
+│   │   ├── secrets.h          # WiFi credentials + STREAM_HOST (gitignored)
+│   │   └── secrets.h.example  # Template for secrets.h
+│   ├── src/                   # ESP32-S3 sources (default)
+│   │   ├── main.cpp           # setup(): WiFi → micInit → HTTP → stream task
+│   │   ├── wifi_manager.*     # WiFi connection helper
+│   │   ├── i2s_microphone.*   # I²S driver + DC blocker
+│   │   ├── audio_stream.*     # TCP streaming task (sole I²S owner)
+│   │   └── http_api.*         # /api/info and /api/health endpoints
+│   └── src_esp32classic/      # Classic ESP32 sources (Unit 2)
+│       └── (similar structure with adjusted pins/config)
 │
-└── server/            # TypeScript / Express — dashboard + ingest
-    ├── src/
-    │   ├── server.ts           Entry point
-    │   ├── app.ts              Express app factory
-    │   ├── config.ts           Runtime + env config
-    │   ├── routes/api.ts       REST + SSE endpoints
-    │   ├── services/
-    │   │   ├── audioIngest.ts      TCP listener, PCM→dBFS, rolling WAV files
-    │   │   ├── esp32Service.ts     Typed fetch helpers for /api/info
-    │   │   └── moduleRegistry.ts   JSON-persisted module registry
-    │   └── types/index.ts      Shared TypeScript interfaces
-    ├── public/                 Web dashboard (tabbed UI, modules grid, modal)
-    │   ├── uploads/            Module photos (served statically)
-    │   ├── js/app.js           Dashboard + modules logic
-    │   └── css/style.css       Dark theme + module card styles
-    ├── data/                   Runtime data (gitignored)
-    │   └── modules.json        Module registry persistence
-    └── tests/                  Jest unit tests (20 tests)
+├── server/                     # TypeScript / Express — dashboard + ingest
+│   ├── package.json           # Dependencies + scripts
+│   ├── tsconfig.json          # TypeScript compiler config
+│   ├── jest.config.ts         # Jest test configuration
+│   ├── src/
+│   │   ├── server.ts          # Entry point
+│   │   ├── app.ts             # Express app factory
+│   │   ├── config.ts          # Runtime + env config
+│   │   ├── routes/api.ts      # REST + SSE endpoints
+│   │   ├── services/
+│   │   │   ├── audioIngest.ts         # TCP listener, PCM→dBFS, rolling WAV
+│   │   │   ├── audioIngestClassic.ts  # Unit 2 ingest service
+│   │   │   ├── esp32Service.ts        # Typed fetch helpers for /api/info
+│   │   │   ├── moduleRegistry.ts      # JSON-persisted module registry
+│   │   │   └── networkChecker.ts      # WiFi SSID validation
+│   │   ├── middleware/        # Express middleware
+│   │   └── types/index.ts     # Shared TypeScript interfaces
+│   ├── public/                # Web dashboard (static files)
+│   │   ├── index.html         # Main dashboard (tabbed UI)
+│   │   ├── module.html        # Full module detail view
+│   │   ├── network-check.html # Network validation page
+│   │   ├── uploads/           # Module photos (served statically)
+│   │   ├── js/app.js          # Dashboard + modules logic
+│   │   ├── css/               # Stylesheets
+│   │   └── lib/               # Third-party libraries (Chart.js, Bootstrap)
+│   ├── data/                  # Runtime data (gitignored)
+│   │   └── modules.json       # Module registry persistence
+│   ├── recordings/            # Audio files (gitignored)
+│   │   └── stream/            # Hourly WAV files + index.jsonl
+│   └── tests/                 # Jest unit tests
+│       ├── esp32Service.test.ts
+│       └── routes.test.ts
+│
+├── SETUP.md                    # Complete setup guide + troubleshooting
+└── README.md                   # This file
 ```
 
 ## Quick Start
 
+> 📖 **First time setup?** Follow the complete guide in [SETUP.md](SETUP.md)
+
 ### 1 — Configure secrets
 
 ```bash
-# firmware/include/secrets.h  (gitignored — never committed)
-#define WIFI_SSID    "your-network"
+# Copy example file
+cd firmware/include
+cp secrets.h.example secrets.h
+
+# Edit firmware/include/secrets.h (gitignored)
+#define WIFI_SSID     "your-network"
 #define WIFI_PASSWORD "your-password"
-#define STREAM_HOST  "10.0.0.x"   # desktop IP where the server runs
+#define STREAM_HOST   "192.168.1.100"   # Your desktop's local IP
 ```
+
+**Finding your desktop IP:**
+- Windows: `ipconfig` (look for IPv4 Address)
+- macOS/Linux: `ifconfig` or `ip addr`
 
 ### 2 — Flash the ESP32
 
@@ -125,85 +172,51 @@ pio device monitor               # watch serial for WiFi IP + stream connection
 
 ### 3 — Start the desktop server
 
-#### Prerequisites
-
-- **Node.js 20+** installed
-- **WiFi connection** to **Dobby** or **Pumpkinpie** network (required for access)
-
-#### Installation
-
 ```bash
 cd server
-npm install
+npm install          # First time only
+npm run dev          # Start with hot reload
 ```
 
-#### Configuration
+Server runs at: **http://localhost:3000**
 
-Create `server/.env.local` (gitignored) with your settings:
+**TCP ingest ports:**
+- Port **8001** — ESP32-S3 Unit 1 (primary)
+- Port **8002** — ESP32 Classic Unit 2 (optional)
+
+#### Optional Configuration
+
+Create `server/.env` or `server/.env.local` to customize:
 
 ```bash
-# Network access control (comma-separated WiFi SSIDs)
-# Only allow access when connected to these networks
-ALLOWED_NETWORKS=YourNetwork1,YourNetwork2
+# Server HTTP port
+PORT=3000
 
-# ESP32 device IP and port (for proxy requests)
-ESP32_IP=10.0.0.x
-ESP32_PORT=80
-
-# Enable audio streaming ingest
+# TCP audio streaming
 STREAM_INGEST_ENABLED=true
 STREAM_INGEST_PORT=8001
 
-# Optional: Enable Unit 2 (ESP32 Classic)
-STREAM_INGEST2_ENABLED=false
+STREAM_INGEST2_ENABLED=false    # Enable Unit 2
 STREAM_INGEST2_PORT=8002
 
-# Server port (default: 3000)
-PORT=3000
+# Archive settings
+RECORDINGS_DIR=./recordings
+ARCHIVE_CHUNK_MS=2000
+
+# ESP32 IP (optional, can set via UI)
+ESP32_IP=192.168.1.50
+ESP32_PORT=80
 ```
 
-#### Starting the Server
-
-**Development mode** (with hot reload):
-```bash
-cd server
-npm run dev
-```
-
-**Production mode**:
-```bash
-cd server
-npm run build    # Compile TypeScript to dist/
-npm start        # Run compiled server
-```
-
-**Restart the server** (when already running):
+**Restart server** (if already running):
 ```bash
 # Windows PowerShell:
-# 1. Find and kill process using port 3000
-netstat -ano | findstr :3000    # Note the PID (last column)
-taskkill /PID <PID> /F          # Replace <PID> with actual number
+netstat -ano | findstr :3000    # Find PID
+taskkill /PID <PID> /F          # Kill process
 
-# 2. Start server again
-cd c:\Users\inouy\electronic_projects\esp\esp32s3-inmp441-project\server
+# Then start again:
 npm run dev
-
-# Quick one-liner (stops all node processes, use with caution):
-Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force ; cd server ; npm run dev
 ```
-
-#### Accessing the Dashboard
-
-1. Open **http://localhost:3000** in your browser
-2. **Network validation** — The app checks your WiFi connection:
-   - ✅ **Connected to allowed network**: Full access to dashboard
-   - ❌ **Wrong/No network**: Disabled interface with "Quit" option
-   - Click **Quit** → Network check page (auto-refreshes when correct network detected)
-   - 🔧 **Configure allowed networks** in `server/.env.local` (see Configuration section)
-
-3. The TCP ingest listener starts automatically on port **8001**
-4. Configure ESP32 IP in the dashboard UI or use the `.env.local` settings
-5. Click **Start listener** if it hasn't auto-started, then watch the waveform fill in
 
 ### 4 — Tests
 
@@ -212,109 +225,163 @@ cd server
 npm test
 ```
 
-## ESP32 REST API
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Firmware version string |
-| GET | `/api/info` | Board + microphone + stream metadata (JSON) |
-| GET | `/api/health` | Uptime, RSSI, streaming flag, free heap (JSON) |
-
-All responses include `Access-Control-Allow-Origin: *`.
-
-## Dashboard Features
-
-### Modules Tab
-
-The dashboard includes a **Modules** tab for managing multiple ESP devices from a unified interface:
-
-- **Visual card grid** — each module displays:
-  - Module name and type (ESP8266, ESP32, ESP32-S3)
-  - Unique identifier (e.g., `esp8266-001`, `esp32s3-001`)
-  - Thumbnail photo (upload via drag-and-drop or file picker)
-  - LED capability badge
-  - IP address badge
-  
-- **Module registry** — JSON-persisted at `server/data/modules.json`, pre-seeded with:
-  - `esp8266-001`: NodeMCU v2 (ESP-12E) with LED control
-  - `esp32s3-001`: ESP32-S3-WROOM-1 audio streaming unit
-  - `esp32-001`: ESP32-D0WD Classic audio streaming unit
-  
-- **Quick modal view** — Click a module card to open:
-  - Module identity (unique ID, model name, MAC address, chip ID)
-  - Image upload/management
-  - IP address and port configuration
-  - LED controls (when available)
-  - Collapsible specifications preview
-  - **"View Full Module Details →"** button to open comprehensive view
-  
-- **Full-page detail view** — Click "View Full Module Details" for:
-  - **Large module photo** with SVG placeholder fallback
-  - **Complete identity panel**: Unique ID, Model, MAC Address, Chip ID
-  - **Network configuration**: IP and Port display
-  - **LED controls**: ON/OFF/BLINK buttons (when hasLed = true)
-  - **Comprehensive hardware specifications**:
-    - Core specs (CPU, RAM, Flash, GPIO count, peripherals)
-    - Connectivity details (WiFi, Bluetooth, BLE with YES/NO badges)
-    - **Complete GPIO pinout tables** with pin numbers, functions, and warnings
-    - Important notes about boot pins, strapping pins, and voltage requirements
-  - **"Open Device" link**: Direct access to ESP device web interface (when IP configured)
-  - **"Edit Settings" button**: Return to main page for configuration changes
-
-- **Type-specific specifications**:
-  - **ESP8266**: NodeMCU/D1 Mini pinout, WiFi-only (no BT/BLE), boot pin warnings
-  - **ESP32-S3**: Dual-core Xtensa LX7, BLE 5.0, USB OTG, 45 GPIOs, strapping pin notes
-  - **ESP32 Classic**: Dual-core Xtensa LX6, Classic BT + BLE 4.2, Hall sensor, GPIO restrictions
-
-- **Device configuration** — Set IP address and port for each module via modal
-- **LED control proxy** — Send ON/OFF/BLINK commands to modules with LED capability
-- **Security** — LED proxy validates private IP addresses only (SSRF protection)
-- **Image management** — Upload board photos (≤5 MB, JPEG/PNG/GIF/WebP), served from `public/uploads/`
-
-**Usage:**  
-1. Click any module card to open quick modal view
-2. Click **"View Full Module Details →"** for comprehensive specs and pinout diagrams
-3. Use **"Open Device"** button to access the ESP device's native web interface
-4. Use **"Edit Settings"** to configure IP, upload photos, or manage the module
-
-## Desktop Server API
-
-### Core Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | Main dashboard (tabbed UI) |
-| GET | `/module?id=<id>` | Full-page module detail view with specs |
-| GET | `/api/health` | Server uptime + ingest status |
-| GET | `/api/config` | Current ESP32 IP/port |
-| POST | `/api/config` | Set ESP32 IP/port (`{ "ip": "x.x.x.x", "port": 80 }`) |
-| GET | `/api/proxy/info` | Proxied board info (120 s stale cache on failure) |
-| GET | `/api/stream/status` | Ingest listener status |
-| POST | `/api/stream/listener` | Start/stop listener (`{ "enabled": true }`) |
-| GET | `/api/stream/live-samples` | SSE stream of dBFS samples (drives waveform) |
-
-### Module Management
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/modules` | List all registered modules |
-| GET | `/api/modules/:id` | Get single module details |
-| PUT | `/api/modules/:id` | Update module config (`{ "ip": "x.x.x.x", "port": 80, "name": "..." }`) |
-| POST | `/api/modules/:id/image` | Upload module photo (multipart form, field: `image`) |
-| DELETE | `/api/modules/:id/image` | Remove module photo |
-| POST | `/api/modules/:id/led/:command` | Send LED command (`on`/`off`/`blink`) to device |
-
 ## Tech Stack
 
 | Layer | Technology |
 |-------|-----------|
-| Firmware | C++ · Arduino / ESP-IDF · FreeRTOS |
-| Audio driver | ESP32 I²S legacy driver (`driver/i2s.h`) |
-| HTTP server (device) | ESP32 `WebServer` · ArduinoJson |
-| Stream transport | Raw TCP, int16 LE PCM, 8-byte preamble |
-| Desktop server | TypeScript · Express 4 · Node 20+ |
-| File uploads | Multer · diskStorage (image validation, 5 MB limit) |
-| Ingest service | `net.Server` TCP listener, rolling WAV files |
-| Live waveform | SSE (`text/event-stream`) → Chart.js |
-| Testing | Jest · ts-jest · Supertest |
-| Dashboard | Bootstrap 5 · Chart.js 4 · Vanilla JS (tabbed UI) |
+| **Firmware** | C++ · Arduino framework · ESP-IDF · FreeRTOS |
+| **Audio driver** | ESP32 I²S driver (`driver/i2s.h`) |
+| **Device HTTP** | ESP32 `WebServer` · ArduinoJson 7 |
+| **Transport** | Raw TCP, int16 LE PCM, 8-byte preamble |
+| **Server runtime** | Node.js 20+ · TypeScript 5 · Express 4 |
+| **File uploads** | Multer with diskStorage (5 MB limit) |
+| **Audio ingest** | `net.Server` TCP listener, rolling WAV files |
+| **Live waveform** | SSE (`text/event-stream`) · Chart.js 4 |
+| **Testing** | Jest · ts-jest · Supertest |
+| **Frontend** | Bootstrap 5 · Chart.js 4 · Vanilla JS |
+| **Build tools** | PlatformIO · ts-node-dev · tsc |
+
+## API Reference
+
+> 📖 **Complete API documentation in [SETUP.md](SETUP.md#api-reference)**
+
+### Server Quick Reference
+
+### Server Quick Reference
+
+**Core endpoints:**
+- `GET /api/health` — Server uptime + ingest status
+- `GET /api/ingest/status` — TCP connection status, sample rate, bytes received
+- `GET /api/ingest/stream` — SSE stream of live dBFS samples (waveform data)
+- `GET /api/ingest/hours` — List recorded hour files
+- `GET /api/modules` — List all ESP32 modules
+- `POST /api/modules/:id/upload` — Upload module photo
+
+**ESP32 endpoints:**
+- `GET /` — Plain text "OK"
+- `GET /api/info` — Board metadata (name, firmware version, mic type)
+- `GET /api/health` — Uptime, WiFi RSSI, streaming status
+
+## Dashboard Features
+
+### Main Dashboard Tab
+- **Live waveform** — Real-time dBFS visualization via SSE
+- **Connection status** — Shows TCP connection state for both units
+- **Audio controls** — Start/stop recording, playback controls
+- **Network indicator** — Current WiFi SSID and connection status
+
+### Modules Tab
+- **Module cards** — Visual grid of all ESP32 devices
+- **Photo uploads** — Drag-and-drop or file picker (≤5 MB)
+- **Quick modal** — Click card for identity, IP config, LED controls
+- **Full detail view** — Complete specs with GPIO pinout tables
+- **LED proxy** — Send ON/OFF/BLINK commands to compatible modules
+- **Security** — Private IP validation (SSRF protection)
+
+### Playback Tab
+- **Hour file browser** — List and play recorded sessions
+- **HTTP Range support** — Seek/scrub through long recordings
+- **Time-aligned playback** — Matches wall-clock time to audio offset
+
+## Known Issues & Improvements Needed
+
+> 📖 **Complete list in [SETUP.md](SETUP.md#known-issues--limitations)**
+
+### ⚠️ Not Best Practices
+
+1. **No authentication** — API is wide open (LAN-only assumed)
+2. **No TLS/HTTPS** — Plain HTTP traffic (unsuitable for public networks)
+3. **Hardcoded WiFi credentials** — Should use WiFi provisioning (BLE, Captive Portal)
+4. **Flat JSON file for modules** — No database, no transactions, corruption risk
+5. **Minimal error handling** — Server crashes can orphan TCP sockets
+6. **Fixed sample rate** — 16 kHz hardcoded, no negotiation
+7. **No rate limiting** — API can be spammed (DoS risk)
+8. **Loose TypeScript typing** — Some `any` types, should be strict
+9. **Incomplete test coverage** — No integration tests for TCP streaming
+
+### 🚀 High-Priority Improvements
+
+1. **Add authentication** (JWT tokens, session-based auth)
+2. **WiFi provisioning** (BLE or SoftAP captive portal)
+3. **Database migration** (SQLite + Prisma ORM)
+4. **HTTPS support** (self-signed or Let's Encrypt)
+5. **Graceful shutdown** (flush WAV headers, close sockets)
+6. **Error recovery** (circuit breakers, exponential backoff)
+
+### 🎨 Nice-to-Have Features
+
+- **Audio analysis** (FFT, spectrograms, VAD)
+- **WebSocket alternative** (replace SSE for bidirectional comms)
+- **Cloud storage** (S3/Azure Blob for hour files)
+- **Multi-room support** (room tagging, synchronized playback)
+- **Docker deployment** (one-command startup)
+- **CI/CD pipeline** (GitHub Actions for tests + firmware builds)
+
+## Development
+
+### Running Tests
+
+```bash
+cd server
+npm test                    # Run all tests
+npm run test:watch          # Watch mode
+npm run test:coverage       # Coverage report
+```
+
+### Building for Production
+
+```bash
+cd server
+npm run build               # Compile TypeScript → dist/
+npm start                   # Run compiled server
+```
+
+### Linting
+
+```bash
+cd server
+npm run lint                # ESLint check
+```
+
+### Firmware Development
+
+```bash
+cd firmware
+pio run --target upload     # Flash firmware
+pio device monitor          # Serial monitor (Ctrl+C to exit)
+
+# Build without uploading:
+pio run
+
+# Clean build:
+pio run --target clean
+```
+
+## Troubleshooting
+
+> 📖 **Full troubleshooting guide in [SETUP.md](SETUP.md#troubleshooting)**
+
+**Common issues:**
+
+- **ESP32 won't connect to WiFi** → Check SSID/password, verify 2.4 GHz network
+- **Server shows "Connection refused"** → Check firewall, verify `STREAM_HOST` IP
+- **No waveform in browser** → Check `/api/ingest/status`, verify ESP32 connection
+- **Choppy playback** → Low WiFi signal, server CPU overload, or large file
+
+## Contributing
+
+Contributions welcome! Please:
+- Follow existing code style
+- Add tests for new features
+- Update documentation
+- Submit pull requests to `main` branch
+
+## License
+
+*(Specify your license here — MIT, Apache 2.0, etc.)*
+
+---
+
+**Firmware Version:** 1.1.0  
+**Server Version:** 1.0.0  
+**Last Updated:** May 28, 2026

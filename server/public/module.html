@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Module Details</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="stylesheet" href="/lib/bootstrap.min.css">
   <link rel="stylesheet" href="/css/style.css">
 </head>
@@ -13,7 +14,7 @@
   <div class="module-header-bar bg-black border-bottom border-secondary">
     <div class="container-fluid d-flex align-items-center justify-content-between py-2 px-3">
       <div class="d-flex align-items-center gap-3">
-        <a href="/" class="btn btn-sm btn-outline-secondary">← Back</a>
+        <button onclick="goBack()" class="btn btn-sm btn-outline-secondary">← Back</button>
         <div class="vr" style="height: 20px;"></div>
         <h1 class="mb-0 fs-5" id="page-title">Module Name</h1>
         <div class="d-flex gap-2">
@@ -41,7 +42,7 @@
     <div id="error-state" class="alert alert-danger d-none">
       <h5 class="alert-heading">Error Loading Module</h5>
       <p id="error-message"></p>
-      <a href="/" class="btn btn-secondary btn-sm">Back to Modules</a>
+      <button onclick="goBack()" class="btn btn-secondary btn-sm">Back to Modules</button>
     </div>
 
     <div id="module-content" class="d-none">
@@ -62,6 +63,16 @@
             🔧 Specifications
           </button>
         </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="parts-tab" data-bs-toggle="tab" data-bs-target="#parts" type="button" role="tab">
+            🧩 Parts/Components
+          </button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="notes-tab" data-bs-toggle="tab" data-bs-target="#notes" type="button" role="tab">
+            📝 Notes
+          </button>
+        </li>
       </ul>
 
       <!-- Tab Content -->
@@ -72,16 +83,44 @@
             <div class="col-md-5 col-lg-4">
               <div class="card bg-dark border-secondary">
                 <div class="card-body">
-                  <h5 class="card-title text-secondary small text-uppercase fw-semibold mb-3">Module Image</h5>
-                  <div class="module-detail-image mb-3" id="page-image-container">
-                    <!-- Image or SVG placeholder -->
+                  <h5 class="card-title text-secondary small text-uppercase fw-semibold mb-3">Module Images</h5>
+                  
+                  <!-- Image Carousel -->
+                  <div class="module-image-carousel mb-3">
+                    <div class="module-image-display" id="page-image-display">
+                      <!-- Current image shown here -->
+                    </div>
+                    
+                    <!-- Carousel Navigation -->
+                    <div class="carousel-nav d-flex justify-content-center align-items-center gap-2 mt-2" id="carousel-nav">
+                      <button class="btn btn-sm btn-outline-secondary" id="carousel-prev" title="Previous">◀</button>
+                      <span class="carousel-counter text-muted small" id="carousel-counter">0 / 0</span>
+                      <button class="btn btn-sm btn-outline-secondary" id="carousel-next" title="Next">▶</button>
+                    </div>
                   </div>
-                  <div class="d-flex justify-content-center gap-2">
+                  
+                  <!-- Rotation Controls -->
+                  <div class="d-flex justify-content-center gap-2 mb-3">
                     <button class="btn btn-sm btn-outline-secondary" id="rotate-0" title="0°">↑</button>
                     <button class="btn btn-sm btn-outline-secondary" id="rotate-90" title="90°">→</button>
                     <button class="btn btn-sm btn-outline-secondary" id="rotate-180" title="180°">↓</button>
                     <button class="btn btn-sm btn-outline-secondary" id="rotate-270" title="270°">←</button>
                   </div>
+                  
+                  <!-- Upload & Delete Controls -->
+                  <div class="d-flex gap-2">
+                    <label class="btn btn-sm btn-outline-primary flex-grow-1" id="upload-label">
+                      <input type="file" id="image-upload-input" accept="image/*" class="d-none">
+                      📤 Add Image
+                    </label>
+                    <button class="btn btn-sm btn-outline-warning" id="set-default-btn" title="Set as default icon image">
+                      ⭐
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" id="delete-image-btn" title="Delete current image">
+                      🗑️
+                    </button>
+                  </div>
+                  <div class="small text-muted mt-2 text-center" id="upload-status"></div>
                 </div>
               </div>
             </div>
@@ -183,11 +222,51 @@
             </div>
           </div>
         </div>
+
+        <!-- Parts/Components Tab -->
+        <div class="tab-pane fade" id="parts" role="tabpanel">
+          <div class="card bg-dark border-secondary">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="card-title text-secondary small text-uppercase fw-semibold mb-0">🧩 Parts & Components</h5>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button class="btn btn-outline-warning" id="parts-edit-btn">✏️ Edit</button>
+                  <button class="btn btn-outline-primary d-none" id="parts-save-btn">💾 Save</button>
+                  <button class="btn btn-outline-secondary d-none" id="parts-cancel-btn">✖ Cancel</button>
+                  <button class="btn btn-outline-info" id="parts-add-btn">➕ Add Component</button>
+                </div>
+              </div>
+              <div id="page-parts-content">
+                <div class="text-secondary small text-center py-3">No parts or components added yet.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Notes Tab -->
+        <div class="tab-pane fade" id="notes" role="tabpanel">
+          <div class="card bg-dark border-secondary">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="card-title text-secondary small text-uppercase fw-semibold mb-0">📝 Notes & Information</h5>
+                <div class="btn-group btn-group-sm" role="group">
+                  <button class="btn btn-outline-warning" id="notes-edit-btn">✏️ Edit</button>
+                  <button class="btn btn-outline-primary d-none" id="notes-save-btn">💾 Save</button>
+                  <button class="btn btn-outline-secondary d-none" id="notes-cancel-btn">✖ Cancel</button>
+                </div>
+              </div>
+              <div id="page-notes-content">
+                <div class="text-secondary small text-center py-3">No notes added yet.</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 
   <script src="/lib/bootstrap.bundle.min.js"></script>
+  <script src="/js/network-guard.js"></script>
   <script src="/js/module-detail.js"></script>
 </body>
 </html>

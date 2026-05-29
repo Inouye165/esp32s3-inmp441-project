@@ -13,7 +13,6 @@ const allowedNetworksText = document.getElementById('allowed-networks-text');
 const quitToNetworkCheckBtn = document.getElementById('quit-to-network-check-btn');
 
 async function checkNetworkConnectivity() {
-  console.log('[Network Check] Starting network validation...');
   try {
     const r = await fetch('/api/network/check', {
       method: 'GET',
@@ -27,7 +26,6 @@ async function checkNetworkConnectivity() {
     }
     
     const data = await r.json();
-    console.log('[Network Check] Response:', data);
       
     // Update allowed networks display
     if (data.allowedNetworks && data.allowedNetworks.length > 0) {
@@ -43,7 +41,6 @@ async function checkNetworkConnectivity() {
     
     // Only allow access if on approved network
     if (data.isAllowed) {
-      console.log('[Network Check] ✓ Network allowed - enabling interface');
       setNetworkConnected(true);
       return true;
     } else {
@@ -62,19 +59,17 @@ async function checkNetworkConnectivity() {
 }
 
 function setNetworkConnected(connected) {
-  console.log(`[Network Check] setNetworkConnected(${connected}) - current state: ${isNetworkConnected}`);
   if (isNetworkConnected === connected) {
-    console.log('[Network Check] State unchanged, skipping');
-    return;
+    return; // State unchanged
   }
   isNetworkConnected = connected;
 
   if (connected) {
-    console.log('[Network Check] Hiding overlay, enabling interactions');
+    console.log('[Network Check] ✓ Network access granted');
     networkOverlay.classList.add('d-none');
     enableAllInteractions();
   } else {
-    console.log('[Network Check] Showing overlay, disabling interactions');
+    console.log('[Network Check] ✗ Network access denied');
     networkOverlay.classList.remove('d-none');
     disableAllInteractions();
   }
@@ -382,11 +377,24 @@ function escapeHtml(s) {
 }
 
 function moduleThumbnail(m) {
+  // Check for default image in new multi-image array
+  if (m.images && m.images.length > 0) {
+    const defaultImage = m.images.find(img => img.isDefault);
+    const imageToShow = defaultImage || m.images[0];
+    if (imageToShow) {
+      return `<img class="module-thumb-img"
+                   src="/uploads/${encodeURIComponent(imageToShow.filename)}?t=${Date.now()}"
+                   alt="${escapeHtml(m.name)}" />`;
+    }
+  }
+  
+  // Fall back to legacy single image
   if (m.imageFile) {
     return `<img class="module-thumb-img"
                  src="/uploads/${encodeURIComponent(m.imageFile)}?t=${Date.now()}"
                  alt="${escapeHtml(m.name)}" />`;
   }
+  
   // Generic chip-like SVG placeholder
   return `
     <svg class="module-thumb-img module-thumb-placeholder" viewBox="0 0 100 100"
@@ -443,7 +451,8 @@ function renderModules() {
   modEls.grid.querySelectorAll('[data-module-id]').forEach(btn => {
     btn.addEventListener('click', () => {
       const moduleId = btn.dataset.moduleId;
-      window.location.href = `/module?id=${encodeURIComponent(moduleId)}`;
+      // Add referrer parameter so back button knows where to return
+      window.location.href = `/module?id=${encodeURIComponent(moduleId)}&from=modules`;
     });
   });
 }
@@ -505,3 +514,12 @@ async function initializeApp() {
 }
 
 initializeApp();
+
+// Check for tab parameter in URL and activate that tab
+const urlParams = new URLSearchParams(window.location.search);
+const tabParam = urlParams.get('tab');
+if (tabParam === 'modules') {
+  const modulesTabEl = document.getElementById('modules-tab');
+  const modulesTab = new bootstrap.Tab(modulesTabEl);
+  modulesTab.show();
+}

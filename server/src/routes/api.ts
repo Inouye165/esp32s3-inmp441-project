@@ -272,22 +272,27 @@ router.post(
   '/modules/:id/image',
   upload.single('image'),
   (req: Request, res: Response) => {
-    const { id } = req.params;
-    // req.file is injected by multer middleware (@types/multer augments Express.Request)
-    const file = (req as Request & { file?: Express.Multer.File }).file;
-    if (!file) {
-      res.status(400).json({ error: 'no image file in request (field name: image)' });
-      return;
+    try {
+      const { id } = req.params;
+      // req.file is injected by multer middleware (@types/multer augments Express.Request)
+      const file = (req as Request & { file?: Express.Multer.File }).file;
+      if (!file) {
+        res.status(400).json({ error: 'no image file in request (field name: image)' });
+        return;
+      }
+      // Use new multi-image API
+      const updated = moduleRegistry.addImage(id, file.filename);
+      if (!updated) {
+        // Module not found — clean up the orphaned file
+        fs.unlink(file.path, () => undefined);
+        res.status(404).json({ error: 'module not found' });
+        return;
+      }
+      res.json({ ok: true, images: updated.images });
+    } catch (err) {
+      console.error('[API] Image upload failed:', err);
+      res.status(500).json({ error: 'Failed to save image', details: err instanceof Error ? err.message : String(err) });
     }
-    // Use new multi-image API
-    const updated = moduleRegistry.addImage(id, file.filename);
-    if (!updated) {
-      // Module not found — clean up the orphaned file
-      fs.unlink(file.path, () => undefined);
-      res.status(404).json({ error: 'module not found' });
-      return;
-    }
-    res.json({ ok: true, images: updated.images });
   },
 );
 

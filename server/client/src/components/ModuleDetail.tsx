@@ -9,6 +9,19 @@ export const ModuleDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [rotation, setRotation] = useState(0);
 
+  const goBack = () => {
+    const params = new URLSearchParams(window.location.search);
+    const from = params.get('from');
+    
+    if (from === 'modules') {
+      window.location.href = '/?tab=modules';
+    } else if (window.history.length > 1) {
+      window.history.back();
+    } else {
+      window.location.href = '/';
+    }
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const moduleId = params.get('id');
@@ -48,7 +61,7 @@ export const ModuleDetail: React.FC = () => {
       <div className="module-error">
         <h5>Error Loading Module</h5>
         <p>{error || 'Module not found'}</p>
-        <a href="/" className="btn-secondary">Back to Modules</a>
+        <button onClick={goBack} className="btn-secondary">Back to Modules</button>
       </div>
     );
   }
@@ -77,7 +90,7 @@ export const ModuleDetail: React.FC = () => {
                 Open Device ↗
               </a>
             )}
-            <a href="/" className="btn-outline">← Back</a>
+            <button onClick={goBack} className="btn-outline">← Back</button>
           </div>
         </div>
       </header>

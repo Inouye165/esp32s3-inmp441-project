@@ -3,6 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import routes from './routes/index';
 import { errorHandler } from './middleware/errorHandler';
+import { networkSecurityMiddleware } from './middleware/networkSecurity';
 
 export function createApp() {
   const app = express();
@@ -15,6 +16,9 @@ export function createApp() {
 
   // Serve original static files (HTML audio streaming dashboard)
   app.use(express.static(path.join(__dirname, '../public')));
+
+  // Network security: Block all API requests when not on approved network
+  app.use('/api', networkSecurityMiddleware);
 
   // API routes
   app.use(routes);
