@@ -3,6 +3,15 @@ import { createApp } from '../src/app';
 import { runtimeConfig } from '../src/config';
 import * as esp32Service from '../src/services/esp32Service';
 
+// Mock the network checker to allow all requests in tests
+jest.mock('../src/services/networkChecker', () => ({
+  checkNetworkConnection: jest.fn().mockResolvedValue({
+    isAllowed: true,
+    ssid: 'test-network',
+    message: 'Connected to approved network',
+  }),
+}));
+
 const app = createApp();
 
 // Reset runtime config before each test

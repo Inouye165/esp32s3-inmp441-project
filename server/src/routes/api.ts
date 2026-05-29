@@ -279,30 +279,220 @@ router.post(
       res.status(400).json({ error: 'no image file in request (field name: image)' });
       return;
     }
-    const updated = moduleRegistry.setImage(id, file.filename);
+    // Use new multi-image API
+    const updated = moduleRegistry.addImage(id, file.filename);
     if (!updated) {
       // Module not found — clean up the orphaned file
       fs.unlink(file.path, () => undefined);
       res.status(404).json({ error: 'module not found' });
       return;
     }
-    res.json({ ok: true, imageFile: file.filename });
+    res.json({ ok: true, images: updated.images });
   },
 );
 
 router.delete('/modules/:id/image', (req: Request, res: Response) => {
   const { id } = req.params;
+  const { filename } = req.body as { filename?: string };
+  if (!filename) {
+    res.status(400).json({ error: 'filename required in body' });
+    return;
+  }
   const mod = moduleRegistry.get(id);
   if (!mod) {
     res.status(404).json({ error: 'module not found' });
     return;
   }
-  if (mod.imageFile) {
-    const filePath = path.join(UPLOADS_DIR, mod.imageFile);
-    fs.unlink(filePath, () => undefined);
-    moduleRegistry.clearImage(id);
+  const filePath = path.join(UPLOADS_DIR, filename);
+  fs.unlink(filePath, () => undefined);
+  const updated = moduleRegistry.removeImage(id, filename);
+  res.json({ ok: true, images: updated?.images || [] });
+});
+
+// Update image rotation
+router.patch('/modules/:id/image/:filename/rotation', (req: Request, res: Response) => {
+  const { id, filename } = req.params;
+  const { rotation } = req.body as { rotation?: number };
+  if (![0, 90, 180, 270].includes(rotation as number)) {
+    res.status(400).json({ error: 'rotation must be 0, 90, 180, or 270' });
+    return;
   }
-  res.json({ ok: true });
+  const updated = moduleRegistry.updateImageRotation(id, filename, rotation as 0 | 90 | 180 | 270);
+  if (!updated) {
+    res.status(404).json({ error: 'module or image not found' });
+    return;
+  }
+  res.json({ ok: true, images: updated.images });
+});
+
+// Set default image (for module icon)
+router.patch('/modules/:id/image/:filename/set-default', (req: Request, res: Response) => {
+  const { id, filename } = req.params;
+  const updated = moduleRegistry.setDefaultImage(id, filename);
+  if (!updated) {
+    res.status(404).json({ error: 'module or image not found' });
+    return;
+  }
+  res.json({ ok: true, images: updated.images });
+});
+
+// Update module pinout
+router.patch('/modules/:id/pinout', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { pinout } = req.body as { pinout?: unknown };
+  
+  // Basic validation
+  if (!pinout || typeof pinout !== 'object') {
+    res.status(400).json({ error: 'pinout object required' });
+    return;
+  }
+  
+  const p = pinout as { leftPins?: unknown[]; rightPins?: unknown[] };
+  if (!Array.isArray(p.leftPins) || !Array.isArray(p.rightPins)) {
+    res.status(400).json({ error: 'pinout must have leftPins and rightPins arrays' });
+    return;
+  }
+  
+  // Validate pin structure
+  const validatePin = (pin: unknown): boolean => {
+    if (!pin || typeof pin !== 'object') return false;
+    const p = pin as { label?: unknown; gpio?: unknown; notes?: unknown; type?: unknown };
+    return (
+      typeof p.label === 'string' &&
+      typeof p.gpio === 'string' &&
+      typeof p.notes === 'string' &&
+      ['gpio', 'power', 'ground'].includes(p.type as string)
+    );
+  };
+  
+  if (!p.leftPins.every(validatePin) || !p.rightPins.every(validatePin)) {
+    res.status(400).json({ error: 'invalid pin structure' });
+    return;
+  }
+  
+  const updated = moduleRegistry.updatePinout(id, p as { leftPins: unknown[]; rightPins: unknown[] } as any);
+  if (!updated) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  res.json({ ok: true, pinout: updated.pinout });
+});
+
+// ─── /api/modules/:id/parts — update parts/components ────────────────────────
+
+router.patch('/modules/:id/parts', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { parts } = req.body as { parts?: unknown };
+  
+  // Basic validation
+  if (!parts || !Array.isArray(parts)) {
+    res.status(400).json({ error: 'parts array required' });
+    return;
+  }
+  
+  // Validate part structure
+  const validatePart = (part: unknown): boolean => {
+    if (!part || typeof part !== 'object') return false;
+    const p = part as { 
+      name?: unknown; 
+      type?: unknown; 
+      manufacturer?: unknown; 
+      model?: unknown; 
+      quantity?: unknown;
+      description?: unknown;
+      datasheet?: unknown;
+      notes?: unknown;
+    };
+    return (
+      typeof p.name === 'string' &&
+      (p.type === undefined || typeof p.type === 'string') &&
+      (p.manufacturer === undefined || typeof p.manufacturer === 'string') &&
+      (p.model === undefined || typeof p.model === 'string') &&
+      (p.quantity === undefined || typeof p.quantity === 'number') &&
+      (p.description === undefined || typeof p.description === 'string') &&
+      (p.datasheet === undefined || typeof p.datasheet === 'string') &&
+      (p.notes === undefined || typeof p.notes === 'string')
+    );
+  };
+  
+  if (!parts.every(validatePart)) {
+    res.status(400).json({ error: 'invalid part structure' });
+    return;
+  }
+  
+  const mod = moduleRegistry.get(id);
+  if (!mod) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  
+  (mod as any).parts = parts;
+  res.json({ ok: true, parts: (mod as any).parts });
+});
+
+// ─── /api/modules/:id/notes — update notes ───────────────────────────────────
+
+router.patch('/modules/:id/notes', (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { notes } = req.body as { notes?: unknown };
+  
+  // Basic validation
+  if (!notes || typeof notes !== 'object') {
+    res.status(400).json({ error: 'notes object required' });
+    return;
+  }
+  
+  const n = notes as {
+    links?: unknown;
+    purchaseDate?: unknown;
+    quantity?: unknown;
+    projects?: unknown;
+    generalNotes?: unknown;
+  };
+  
+  // Validate structure
+  const validateLink = (link: unknown): boolean => {
+    if (!link || typeof link !== 'object') return false;
+    const l = link as { title?: unknown; url?: unknown };
+    return (
+      (l.title === undefined || typeof l.title === 'string') &&
+      (l.url === undefined || typeof l.url === 'string')
+    );
+  };
+  
+  if (n.links !== undefined && (!Array.isArray(n.links) || !n.links.every(validateLink))) {
+    res.status(400).json({ error: 'invalid links structure' });
+    return;
+  }
+  
+  if (n.purchaseDate !== undefined && typeof n.purchaseDate !== 'string') {
+    res.status(400).json({ error: 'purchaseDate must be a string' });
+    return;
+  }
+  
+  if (n.quantity !== undefined && typeof n.quantity !== 'number') {
+    res.status(400).json({ error: 'quantity must be a number' });
+    return;
+  }
+  
+  if (n.projects !== undefined && (!Array.isArray(n.projects) || !n.projects.every(p => typeof p === 'string'))) {
+    res.status(400).json({ error: 'projects must be an array of strings' });
+    return;
+  }
+  
+  if (n.generalNotes !== undefined && typeof n.generalNotes !== 'string') {
+    res.status(400).json({ error: 'generalNotes must be a string' });
+    return;
+  }
+  
+  const mod = moduleRegistry.get(id);
+  if (!mod) {
+    res.status(404).json({ error: 'module not found' });
+    return;
+  }
+  
+  (mod as any).notes = notes;
+  res.json({ ok: true, notes: (mod as any).notes });
 });
 
 // ─── /api/modules/:id/led/:command — proxy LED command to device ─────────────
